@@ -25,7 +25,6 @@ This project demonstrates how reinforcement learning can be used to create self-
 goal-seeker-ai/
 ├── common/
 │   ├── config.py        # Configuration parameters
-│   ├── logger.py        # Logging utilities
 │   └── rl_utils.py      # Reinforcement Learning utilities
 │
 ├── controllers/

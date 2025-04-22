@@ -1,6 +1,4 @@
-"""
-Configuration module for robot learning parameters and simulation settings.
-"""
+"""RL & simulation configuration and logger setup."""
 
 import logging
 import os
@@ -13,30 +11,29 @@ PLOT_DIR = DATA_DIR
 
 
 def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
-    """
-    Configure and return a logger with the specified name and level.
+    """Initialize a logger with console output and optional file logging.
 
     Args:
-        name (str): Logger name, typically __name__ of the calling module
-        level (int): Logging level (DEBUG, INFO, WARNING, ERROR)
-        log_to_file (bool): Whether to also log to a file
-        log_dir (str): Directory for log files if log_to_file is True
+        name (str): Logger identifier.
+        level (int): Minimum log level.
+        log_to_file (bool): Write logs to file if True.
+        log_dir (str): Directory for log files.
 
     Returns:
-        logging.Logger: Configured logger instance
+        logging.Logger: Configured logger.
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # Clear any existing handlers to avoid duplicates when reconfiguring
+    # Remove existing handlers to prevent duplicates
     if logger.handlers:
         logger.handlers.clear()
 
-    # Create console handler with a formatter
+    # Setup console handler
     console_handler = logging.StreamHandler()
     console_handler.setLevel(level)
 
-    # Create formatter
+    # Define log message format
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -44,12 +41,12 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Optionally add file handler
+    # If log_to_file:
     if log_to_file:
-        # Create logs directory if it doesn't exist
+        # Ensure log_dir exists
         os.makedirs(log_dir, exist_ok=True)
 
-        # Create timestamped log file
+        # Generate timestamped log filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = os.path.join(log_dir, f"{name.split('.')[-1]}_{timestamp}.log")
 
@@ -62,22 +59,12 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
 
 
 def get_logger(name, level=logging.INFO, log_to_file=False):
-    """
-    Get a logger with the given name. Convenience function.
-
-    Args:
-        name (str): Logger name
-        level (int): Logging level
-        log_to_file (bool): Whether to log to a file
-
-    Returns:
-        logging.Logger: Configured logger
-    """
+    """Shortcut to setup_logger with optional file output."""
     return setup_logger(name, level, log_to_file)
 
 
 class RLConfig:
-    """Reinforcement learning configuration parameters."""
+    """Common RL hyperparameters."""
 
     # Core RL parameters
     LEARNING_RATE = 0.1
@@ -113,7 +100,7 @@ class RLConfig:
 
 
 class RobotConfig:
-    """Robot configuration parameters."""
+    """Robot physical parameters and start/target positions."""
 
     # Robot physical parameters
     MAX_SPEED = 10.0
@@ -121,16 +108,14 @@ class RobotConfig:
     DEFAULT_POSITION = [0.0, 0.0, 0.0]
 
     # Target positions for training
-    # TARGET_POSITIONS = [[0.62, -0.61], [0.5, 0.5], [-0.5, 0.5]]
     TARGET_POSITIONS = [[0.62, -0.61]]
 
     # Starting positions for training
-    # START_POSITIONS = [[0.0, 0.0, 0.0], [0.0, 0.3, 0.0], [-0.3, 0.0, 0.0]]
     START_POSITIONS = [[0.0, 0.0, 0.0]]
 
 
 class SimulationConfig:
-    """Simulation and logging configuration."""
+    """Simulation settings and logging options."""
 
     # Logging parameters
     LOG_LEVEL_DRIVER = "INFO"

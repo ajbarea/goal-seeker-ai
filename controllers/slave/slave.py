@@ -1,9 +1,4 @@
-"""
-Enhanced slave controller with additional Webots robot API functionality
-
-This module defines the Slave class, which extends the Robot class and provides
-functionalities for obstacle avoidance, reinforcement learning, and goal seeking.
-"""
+"""Slave robot controller: obstacle avoidance, learning, and goal seeking."""
 
 from controller import AnsiCodes, Robot  # type: ignore
 import random
@@ -22,12 +17,16 @@ logger = get_logger(
 
 
 class Enumerate(object):
+    """Simple enum creation from space-separated names."""
+
     def __init__(self, names):
         for number, name in enumerate(names.split()):
             setattr(self, name, number)
 
 
 class Slave(Robot):
+    """Main robot controller: mode handling and RL integration."""
+
     Mode = Enumerate("STOP MOVE_FORWARD AVOID_OBSTACLES TURN SEEK_GOAL LEARN")
     timeStep = RobotConfig.TIME_STEP
     maxSpeed = RobotConfig.MAX_SPEED
@@ -36,22 +35,19 @@ class Slave(Robot):
     distanceSensors = []
 
     def boundSpeed(self, speed):
-        """Clamp the speed value within [-maxSpeed, maxSpeed]."""
+        """Clamp speed to allowed range."""
         return max(-self.maxSpeed, min(self.maxSpeed, speed))
 
     def __init__(self):
-        """Initialize the slave robot, its sensors, devices and learning parameters."""
+        """Init devices, sensors, and Q-learning agent."""
         super(Slave, self).__init__()
 
-        # Get robot information
         self.robot_name = self.getName()
         logger.info(f"Initializing robot: {self.robot_name}")
 
-        # Get basic time step from the world
         self.world_time_step = int(self.getBasicTimeStep())
         self.timeStep = self.world_time_step
 
-        # Try to load custom data from previous runs (Q-learning data)
         try:
             custom_data = self.getCustomData()
             if custom_data and custom_data.strip():
@@ -74,7 +70,6 @@ class Slave(Robot):
             self.distanceSensors.append(self.getDevice("ds" + str(dsnumber)))
             self.distanceSensors[-1].enable(self.timeStep)
 
-        # Add GPS for position tracking
         self.gps = None
         try:
             gps_device = self.getDevice("gps")
@@ -84,11 +79,9 @@ class Slave(Robot):
             logger.info("Using supervisor position updates (GPS not available)")
             self.gps = None
 
-        # For positioning without GPS
-        self.position = [0, 0]  # Default position when unknown
-        self.orientation = 0.0  # Estimate of current orientation
+        self.position = [0, 0]
+        self.orientation = 0.0
 
-        # Initialize the Q-learning agent
         self.q_agent = QLearningAgent(
             learning_rate=RLConfig.LEARNING_RATE,
             min_learning_rate=RLConfig.MIN_LEARNING_RATE,
@@ -98,37 +91,30 @@ class Slave(Robot):
             max_speed=self.maxSpeed,
         )
 
-        # Q-learning state
         self.learning_active = False
         self.target_position = None
         self.last_reward = 0
         self.current_state = None
         self.last_action = None
 
-        # For tracking learning performance
         self.rewards_history = []
-
-        # Flag to track if target reached message has been printed
         self.target_reached_reported = False
 
-        # Add action persistence for smoother learning
-        self.action_persistence = 0  # Counter for current action duration
+        self.action_persistence = 0
         self.action_persistence_duration = RLConfig.ACTION_PERSISTENCE_INITIAL
-        self.current_persistent_action = None  # Current action being executed
+        self.current_persistent_action = None
 
         logger.info(f"Slave robot initialization complete: {self.robot_name}")
 
     def run(self):
-        """Main control loop for the slave robot."""
+        """Per-step message handling, mode control, and motor updates."""
         logger.info("Starting slave robot control loop")
 
         while True:
-            # Read the supervisor order.
             if self.receiver.getQueueLength() > 0:
                 message = self.receiver.getString()
                 self.receiver.nextPacket()
 
-                # Process position updates
                 if message.startswith("position:"):
                     try:
                         coords = message[9:].split(",")
@@ -138,16 +124,12 @@ class Slave(Robot):
                     except ValueError:
                         logger.error("Invalid position data")
 
-                # Process rewards
                 elif message.startswith("reward:"):
                     try:
                         reward = float(message[7:])
                         self.last_reward = reward
-
-                        # Track reward for plotting
                         self.rewards_history.append(reward)
 
-                        # Update Q-table if learning is active
                         if (
                             self.learning_active
                             and self.current_state is not None
@@ -159,7 +141,6 @@ class Slave(Robot):
                             )
                             self.current_state = next_state
 
-                            # Optionally adjust action persistence based on rewards
                             if abs(reward) > 10:
                                 self.action_persistence = max(
                                     0, self.action_persistence - 3
@@ -169,7 +150,7 @@ class Slave(Robot):
 
                 elif message == "start_learning":
                     self.mode = self.Mode.LEARN
-                    self.current_state = None  # Force state recalculation
+                    self.current_state = None
                     logger.info("Entering learning mode")
 
                 elif message == "send q_table":
@@ -186,9 +167,7 @@ class Slave(Robot):
                         logger.error(f"Error loading Q-table: {e}")
 
                 else:
-                    # Only print command messages under specific conditions
                     if message.startswith(RLConfig.ACTION_COMMAND_PREFIX):
-                        # Extract action number from command
                         try:
                             current_action = int(message.split(":")[1])
                             action_name = get_action_name(current_action)
@@ -205,7 +184,6 @@ class Slave(Robot):
                             f"Received command: {AnsiCodes.RED_FOREGROUND}{message}{AnsiCodes.RESET}"
                         )
 
-                    # Continue processing other message types
                     if message.startswith("learn:"):
                         coords = message[6:].split(",")
                         if len(coords) == 2:
@@ -219,7 +197,6 @@ class Slave(Robot):
                             except ValueError:
                                 logger.error("Invalid coordinates for learning target")
 
-                    # Process goal seeking
                     elif message.startswith("seek goal:"):
                         coords = message[10:].split(",")
                         if len(coords) == 2:
@@ -228,20 +205,14 @@ class Slave(Robot):
                                 y = float(coords[1])
                                 self.target_position = [x, y]
                                 self.mode = self.Mode.SEEK_GOAL
-                                self.learning_active = False  # Exploitation
-
-                                # Reset action persistence to allow quicker reactions
+                                self.learning_active = False
                                 self.action_persistence = 0
                                 self.current_persistent_action = None
-
-                                # Reset target reached flag
                                 self.target_reached_reported = False
-
                                 logger.info(f"Seeking goal at ({x}, {y})")
                             except ValueError:
                                 logger.error("Invalid coordinates for goal")
 
-                    # Update exploration rate
                     elif message.startswith("exploration:"):
                         try:
                             new_rate = float(message[12:])
@@ -249,12 +220,10 @@ class Slave(Robot):
                         except ValueError:
                             logger.error("Invalid exploration rate")
 
-                    # Process action persistence adjustments
                     elif message.startswith("persistence:"):
                         try:
                             new_persistence = int(message[12:])
                             self.action_persistence_duration = new_persistence
-                            # Reset current persistence counter to try new value immediately
                             self.action_persistence = 0
                             logger.debug(
                                 f"Action persistence updated to {new_persistence} steps"
@@ -262,7 +231,6 @@ class Slave(Robot):
                         except ValueError:
                             logger.error("Invalid persistence value")
 
-                    # Other mode switches
                     elif message == "stop learn":
                         self.learning_active = False
                         self.mode = self.Mode.AVOID_OBSTACLES
@@ -282,46 +250,37 @@ class Slave(Robot):
                         self.mode = self.Mode.MOVE_FORWARD
                     elif message == "stop":
                         self.mode = self.Mode.STOP
-                        self.handle_reset()  # Add proper reset handling
+                        self.handle_reset()
                     elif message == "turn":
                         self.mode = self.Mode.TURN
 
-            # Get sensor data
             delta = (
                 self.distanceSensors[0].getValue() - self.distanceSensors[1].getValue()
             )
             speeds = [0.0, 0.0]
 
-            # Simplify mode handling - reduce heuristic overheads
-            # Basic obstacle avoidance with less complexity
             if self.mode == self.Mode.AVOID_OBSTACLES:
                 speeds[0] = self.boundSpeed(self.maxSpeed / 2 + 0.1 * delta)
                 speeds[1] = self.boundSpeed(self.maxSpeed / 2 - 0.1 * delta)
 
-                # Basic obstacle safety with fewer special cases
                 left_sensor = self.distanceSensors[0].getValue()
                 right_sensor = self.distanceSensors[1].getValue()
 
-                if (
-                    left_sensor > 800 and right_sensor > 800
-                ):  # Both sensors detect close obstacles
-                    speeds = [-self.maxSpeed / 2, -self.maxSpeed / 2]  # Back up
-                elif left_sensor > 800:  # Left obstacle
+                if left_sensor > 800 and right_sensor > 800:
+                    speeds = [-self.maxSpeed / 2, -self.maxSpeed / 2]
+                elif left_sensor > 800:
                     speeds = [self.maxSpeed / 2, -self.maxSpeed / 3]
-                elif right_sensor > 800:  # Right obstacle
+                elif right_sensor > 800:
                     speeds = [-self.maxSpeed / 3, self.maxSpeed / 2]
 
             elif self.mode == self.Mode.MOVE_FORWARD:
                 speeds[0] = self.maxSpeed
                 speeds[1] = self.maxSpeed
 
-                # Basic safety for MOVE_FORWARD - still need to avoid obstacles
                 left_sensor = self.distanceSensors[0].getValue()
                 right_sensor = self.distanceSensors[1].getValue()
-                if (
-                    left_sensor > 800 or right_sensor > 800
-                ):  # Only for very close obstacles
-                    speeds = [0.0, 0.0]  # Stop instead of crashing
+                if left_sensor > 800 or right_sensor > 800:
+                    speeds = [0.0, 0.0]
 
             elif self.mode == self.Mode.TURN:
                 speeds[0] = self.maxSpeed / 2
@@ -331,31 +290,25 @@ class Slave(Robot):
                 speeds = [0.0, 0.0]
 
             elif self.mode == self.Mode.SEEK_GOAL or self.mode == self.Mode.LEARN:
-                # Get current position
                 position = None
                 if self.gps:
                     try:
                         position = self.gps.getValues()
                         if position and len(position) >= 2:
-                            position = position[:2]  # Just x, y coordinates
+                            position = position[:2]
                     except Exception:
                         position = None
 
-                # Fallback to position from supervisor
                 if position is None:
                     position = self.position
 
-                # Update our current position
                 if position:
                     self.position = position
 
-                # Learning mode - use reinforcement learning agent
                 if self.mode == self.Mode.LEARN and self.learning_active:
-                    # Get current state if not already set
                     if self.current_state is None:
                         self.current_state = self.get_discrete_state()
 
-                    # Calculate distance to target for STOP filtering
                     current_distance = None
                     if self.target_position and self.position:
                         try:
@@ -365,59 +318,45 @@ class Slave(Robot):
                         except Exception:
                             current_distance = None
 
-                    # Get action using Q-learning agent with simplified persistence logic
                     if self.action_persistence == 0:
                         action = self.q_agent.choose_action(
                             self.current_state, current_distance
                         )
                         self.current_persistent_action = action
-                        # Set action persistence with less complexity
                         self.action_persistence = self.action_persistence_duration
                     else:
                         action = self.current_persistent_action
                         self.action_persistence -= 1
 
-                    # Execute action
                     speeds = self.q_agent.execute_action(action)
                     self.last_action = action
 
-                # Goal seeking mode - use learned policy without exploration
                 elif self.mode == self.Mode.SEEK_GOAL and self.target_position:
-                    # Get current state
                     state = self.get_discrete_state()
-
-                    # Calculate distance to target
                     current_distance = calculate_distance(
                         self.position, self.target_position
                     )
 
-                    # Check if we've reached the target
                     if current_distance < RLConfig.TARGET_THRESHOLD:
-                        # Target reached logic
                         if not self.target_reached_reported:
                             logger.info("🎯 Target reached in SEEK_GOAL mode!")
                             self.target_reached_reported = True
 
-                        speeds = [0.0, 0.0]  # Stop the robot
-                        # Force motor velocities to zero for more reliable stopping
+                        speeds = [0.0, 0.0]
                         self.motors[0].setVelocity(0.0)
                         self.motors[1].setVelocity(0.0)
                     else:
-                        # Reset the flag if we move away from the target
                         if (
                             self.target_reached_reported
                             and current_distance > RLConfig.TARGET_THRESHOLD * 1.5
                         ):
                             self.target_reached_reported = False
 
-                        # Simplified goal seeking behavior
-                        # Use Q-learning policy with minimal adjustments
                         action = self.q_agent.choose_best_action(
                             state, current_distance
                         )
 
-                        # Log action and state periodically
-                        if random.random() < 0.01:  # ~1% of steps
+                        if random.random() < 0.01:
                             action_name = get_action_name(action)
                             logger.debug(
                                 f"Goal seeking: state={state}, action={action_name}, "
@@ -426,7 +365,6 @@ class Slave(Robot):
 
                         speeds = self.q_agent.execute_action(action)
 
-                        # Basic safety override for imminent collisions
                         left_sensor = self.distanceSensors[0].getValue()
                         right_sensor = self.distanceSensors[1].getValue()
 
@@ -437,57 +375,46 @@ class Slave(Robot):
                         elif right_sensor > 800:
                             speeds = [-self.maxSpeed / 3, self.maxSpeed / 2]
 
-                # No target or not in learning mode
                 else:
-                    # Use basic obstacle avoidance
                     speeds[0] = self.boundSpeed(self.maxSpeed / 2 + 0.1 * delta)
                     speeds[1] = self.boundSpeed(self.maxSpeed / 2 - 0.1 * delta)
 
-                    # Apply obstacle safety logic for non-learning modes
                     left_sensor = self.distanceSensors[0].getValue()
                     right_sensor = self.distanceSensors[1].getValue()
 
-                    # Only override if obstacles are very close
-                    if left_sensor > 800 and right_sensor > 800:  # Higher threshold
-                        speeds = [-self.maxSpeed / 2, -self.maxSpeed / 2]  # Back up
-                    elif left_sensor > 800:  # Left obstacle very close
+                    if left_sensor > 800 and right_sensor > 800:
+                        speeds = [-self.maxSpeed / 2, -self.maxSpeed / 2]
+                    elif left_sensor > 800:
                         speeds[0] = self.maxSpeed / 2
                         speeds[1] = -self.maxSpeed / 3
-                    elif right_sensor > 800:  # Right obstacle very close
+                    elif right_sensor > 800:
                         speeds[0] = -self.maxSpeed / 3
                         speeds[1] = self.maxSpeed / 2
 
-            # Set the motor speed
             self.motors[0].setVelocity(speeds[0])
             self.motors[1].setVelocity(speeds[1])
 
-            # Perform a simulation step, quit the loop when Webots is about to quit.
             if self.step(self.timeStep) == -1:
-                # Before exiting, save some data and plot final results
                 if self.learning_active and len(self.rewards_history) > 0:
                     self.save_learning_progress()
                     self.plot_rewards()
 
-                # Save the Q-table
                 self.q_agent.save_q_table(SimulationConfig.Q_TABLE_PATH)
                 logger.info("Robot controller exiting")
                 break
 
     def get_discrete_state(self):
-        """Generate a discrete state representation for Q-learning using the centralized rl_utils function."""
+        """Return discrete state tuple for RL agent."""
         if not self.position or not self.target_position:
             return None
 
-        # Get wheel velocities
         left_wheel_velocity = self.motors[0].getVelocity()
         right_wheel_velocity = self.motors[1].getVelocity()
         wheel_velocities = [left_wheel_velocity, right_wheel_velocity]
 
-        # Get sensor readings
         left_sensor_value = self.distanceSensors[0].getValue()
         right_sensor_value = self.distanceSensors[1].getValue()
 
-        # Use the QLearningAgent's method, which delegates to the centralized function
         return self.q_agent.get_discrete_state(
             self.position,
             self.target_position,
@@ -498,7 +425,7 @@ class Slave(Robot):
         )
 
     def save_learning_progress(self):
-        """Store current learning progress in the robot's custom data."""
+        """Save learning flags to robot custom data."""
         if hasattr(self, "q_agent") and self.q_agent.q_table:
             data = f"learning_active:{self.learning_active},exploration:{self.q_agent.exploration_rate}"
             try:
@@ -508,7 +435,7 @@ class Slave(Robot):
                 logger.error(f"Could not save data: {e}")
 
     def send_q_table(self):
-        """Output Q-table statistics for supervisor review."""
+        """Log Q-table size."""
         if not hasattr(self, "emitter"):
             return
         try:
@@ -518,19 +445,17 @@ class Slave(Robot):
             logger.error(f"Error with Q-table: {e}")
 
     def plot_rewards(self):
-        """Plot the rewards history to visualize the learning progress."""
+        """Plot and save reward history."""
         if not self.rewards_history:
             logger.warning("No rewards to plot")
             return
 
-        # Plot raw rewards
         plt.figure(figsize=(12, 6))
         plt.plot(self.rewards_history, label="Rewards", color="lightblue", alpha=0.3)
 
-        # Apply smoothing for better visualization
         if len(self.rewards_history) > 10:
-            window = min(len(self.rewards_history) // 10, 50)  # Adaptive window size
-            window = max(window, 2)  # Ensure window is at least 2
+            window = min(len(self.rewards_history) // 10, 50)
+            window = max(window, 2)
             rewards_smoothed = np.convolve(
                 self.rewards_history, np.ones(window) / window, mode="valid"
             )
@@ -542,14 +467,12 @@ class Slave(Robot):
                 linewidth=2,
             )
 
-        # Add title and labels
         plt.title(f"Learning Progress - {self.robot_name}")
         plt.xlabel("Step")
         plt.ylabel("Reward")
         plt.grid(alpha=0.3)
         plt.legend()
 
-        # Save the plot
         try:
             plot_dir = SimulationConfig.PLOT_DIR
             os.makedirs(plot_dir, exist_ok=True)
@@ -561,23 +484,19 @@ class Slave(Robot):
         plt.close()
 
     def handle_reset(self):
-        """Handle a reset command by ensuring robot is properly stopped."""
-        # Stop motors
+        """Stop motors and reset state."""
         self.motors[0].setVelocity(0.0)
         self.motors[1].setVelocity(0.0)
 
-        # Reset physics-related state
         self.orientation = 0.0
         self.action_persistence = 0
         self.current_persistent_action = None
 
-        # Give time for physics to settle
         for _ in range(3):
             if self.step(self.timeStep) == -1:
                 break
 
 
-# Initialize and run the controller
 if __name__ == "__main__":
     controller = Slave()
     controller.run()

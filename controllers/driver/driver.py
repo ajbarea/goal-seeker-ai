@@ -1,4 +1,4 @@
-"""Supervisor controller for robot simulation."""
+"""Supervisor for robot sim and RL control."""
 
 from controller import Supervisor  # type: ignore
 import logging
@@ -17,9 +17,10 @@ class Driver(Supervisor):
     TIME_STEP = RobotConfig.TIME_STEP
 
     def __init__(self):
+        """Init devices, logger, and RL controller."""
         super(Driver, self).__init__()
 
-        # Basic setup
+        # Init logger and devices
         self.logger = get_logger(
             __name__, level=getattr(logging, SimulationConfig.LOG_LEVEL_DRIVER, "INFO")
         )
@@ -27,44 +28,45 @@ class Driver(Supervisor):
         self.keyboard = self.getKeyboard()
         self.keyboard.enable(self.TIME_STEP)
 
-        # Robot reference
+        # Get robot and fields
         self.robot = self.getFromDef("ROBOT1")
         self.translation_field = self.robot.getField("translation")
 
-        # Navigation and positioning
+        # Init target tracking
         self.target_position = None
         self.previous_distance_to_target = None
 
-        # Create RL controller
+        # Init RL controller
         self.rl_controller = QLearningController(self, self.logger)
 
-        # Step counter for periodic tasks
+        # Init step counter
         self.step_counter = 0
 
+        # Log startup
         self.logger.info("Driver initialization complete")
         self.logger.info("Press 'I' for help")
 
     def run(self):
-        """Main control loop."""
+        """Main loop for RL, goal seeking, and manual commands."""
         self.display_help()
         previous_message = ""
 
         while True:
-            # Increment step counter
+            # Step counter
             self.step_counter += 1
 
-            # Send robot position information periodically
+            # Send position update
             if self.step_counter % SimulationConfig.POSITION_UPDATE_FREQ == 0:
                 position = self.translation_field.getSFVec3f()
                 pos_message = f"position:{position[0]},{position[1]}"
                 self.emitter.send(pos_message.encode("utf-8"))
 
-            # Handle reinforcement learning training if active
+            # RL training
             if self.rl_controller.training_active:
                 position = self.translation_field.getSFVec3f()
                 self.rl_controller.manage_training_step(position)
 
-            # Handle goal seeking if active
+            # Goal seeking
             elif (
                 hasattr(self.rl_controller, "goal_seeking_active")
                 and self.rl_controller.goal_seeking_active
@@ -72,7 +74,7 @@ class Driver(Supervisor):
                 position = self.translation_field.getSFVec3f()
                 self.monitor_goal_seeking(position)
 
-            # Handle keyboard input and basic robot control
+            # Manual commands
             k = self.keyboard.getKey()
             message = ""
 
@@ -102,21 +104,19 @@ class Driver(Supervisor):
                 self.emitter.send(message.encode("utf-8"))
 
             if self.step(self.TIME_STEP) == -1:
+                # Save Q-table and exit
                 self.rl_controller.save_q_table()
                 break
 
     def clear_pending_commands(self):
-        """Clear any pending commands in the message queue to ensure clean state."""
+        """Clear commands by stepping simulation."""
         # Just step the simulation a few times without sending commands
         for _ in range(5):
             self.step(self.TIME_STEP)
         return
 
     def monitor_goal_seeking(self, position):
-        """
-        Monitor the robot's progress toward the goal during goal-seeking behavior.
-        Enhanced with insights from old_code.py.
-        """
+        """Check goal progress, stuck state, and timeout."""
         if not self.target_position:
             return
 
@@ -181,7 +181,7 @@ class Driver(Supervisor):
             self.emitter.send("stop".encode("utf-8"))
 
     def display_help(self):
-        """Display available keyboard commands."""
+        """Log keyboard commands."""
         self.logger.info(
             "\nCommands:\n"
             " I - Display this help message\n"
@@ -195,7 +195,7 @@ class Driver(Supervisor):
         )
 
     def safely_reset_robot(self):
-        """Safely reset the robot to its default position."""
+        """Reset robot to default position."""
         self.emitter.send("stop".encode("utf-8"))
         self.step(self.TIME_STEP)
         self.robot.resetPhysics()
@@ -205,11 +205,7 @@ class Driver(Supervisor):
         self.logger.info("Robot reset to default position")
 
     def reset_robot_position(self, position):
-        """Reset the robot to a specific position with proper physics reset.
-
-        Args:
-            position (list): The [x, y, z] position to reset to.
-        """
+        """Reset to given position with random offset and physics reset."""
         # Add small random offset for variability
         import random
 
@@ -257,11 +253,11 @@ class Driver(Supervisor):
         self.logger.debug(f"Robot reset to position: {randomized_position}")
 
     def set_target_position(self, target_position):
-        """Set the target position for the robot."""
+        """Store target position."""
         self.target_position = target_position
 
     def plot_training_results(self, rewards):
-        """Plot the training results."""
+        """Plot and save training rewards."""
         if not rewards:
             self.logger.warning("No rewards to plot")
             return
@@ -302,5 +298,4 @@ class Driver(Supervisor):
 
 # Main entry point
 if __name__ == "__main__":
-    controller = Driver()
-    controller.run()
+    Driver().run()
