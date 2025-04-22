@@ -7,7 +7,6 @@ from datetime import datetime
 # Data directory
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data"))
 Q_TABLE_PATH = os.path.join(DATA_DIR, "q_table.pkl")
-PLOT_DIR = DATA_DIR
 
 
 def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
@@ -95,9 +94,6 @@ class RLConfig:
     # Command protocol for sending actions to slave
     ACTION_COMMAND_PREFIX = "exec_action:"
 
-    # Default path for Q-table
-    Q_TABLE_PATH: str = Q_TABLE_PATH
-
 
 class RobotConfig:
     """Robot physical parameters and start/target positions."""
@@ -124,10 +120,6 @@ class SimulationConfig:
 
     # Reporting frequencies
     POSITION_UPDATE_FREQ = 5
-
-    # File paths
-    Q_TABLE_PATH = Q_TABLE_PATH
-    PLOT_DIR = PLOT_DIR
 
     # Message protocol configuration
     ENABLE_DETAILED_LOGGING = True

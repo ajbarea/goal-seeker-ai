@@ -9,6 +9,7 @@ from common.config import (
     RobotConfig,
     RLConfig,
     get_logger,
+    DATA_DIR,
 )
 from q_learning_controller import QLearningController
 
@@ -164,7 +165,7 @@ class Driver(Supervisor):
                     self.stuck_counter = getattr(self, "stuck_counter", 0) + 1
                     if self.stuck_counter >= 6:  # Stuck for 6 consecutive checks
                         self.logger.info(
-                            f"Robot appears stuck at distance {current_distance:.2f}. Sending randomize command."
+                            f"🤔 Robot seems confused at distance {current_distance:.2f}. It's been spinning in circles for a while... sending reset command."
                         )
                         self.emitter.send("randomize".encode("utf-8"))
                         self.stuck_counter = 0
@@ -176,7 +177,9 @@ class Driver(Supervisor):
 
         # Check for timeout with extended time for goal seeking
         if elapsed_time > SimulationConfig.GOAL_SEEKING_TIMEOUT:
-            self.logger.info(f"Goal seeking timed out after {elapsed_time:.1f} seconds")
+            self.logger.info(
+                f"💥 Mission failed! Robot got distracted and timed out after {elapsed_time:.1f} seconds."
+            )
             self.rl_controller.goal_seeking_active = False
             self.emitter.send("stop".encode("utf-8"))
 
@@ -264,7 +267,7 @@ class Driver(Supervisor):
 
         try:
             # Create directory if it doesn't exist
-            os.makedirs(SimulationConfig.PLOT_DIR, exist_ok=True)
+            os.makedirs(DATA_DIR, exist_ok=True)
 
             # Create episode numbers based on actual rewards length
             episodes = list(range(1, len(rewards) + 1))
@@ -283,11 +286,11 @@ class Driver(Supervisor):
             plot_q_learning_progress(
                 rewards=rewards,
                 filename="training_results",
-                save_dir=SimulationConfig.PLOT_DIR,
+                save_dir=DATA_DIR,
             )
 
             self.logger.info(
-                f"Training results plotted to {SimulationConfig.PLOT_DIR}\\training_results.png"
+                f"Training results plotted to {DATA_DIR}\\training_results.png"
             )
         except Exception as e:
             self.logger.error(f"Error plotting training results: {e}")

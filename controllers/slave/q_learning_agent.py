@@ -5,7 +5,7 @@ import pickle
 import os
 from typing import Dict, List, Tuple, Optional
 from common.rl_utils import get_discrete_state
-from common.config import RLConfig, get_logger
+from common.config import RLConfig, get_logger, Q_TABLE_PATH
 
 # Set up logger
 logger = get_logger(__name__)
@@ -48,7 +48,7 @@ class QLearningAgent:
         self.discount_factors: List[float] = []
 
         try:
-            self.load_q_table(RLConfig.Q_TABLE_PATH)
+            self.load_q_table(Q_TABLE_PATH)
         except Exception as e:
             logger.warning(f"Could not load Q-table: {e}")
 
@@ -103,16 +103,40 @@ class QLearningAgent:
 
             distance_bin, angle_bin, left_obstacle, right_obstacle, is_moving = state
 
+            # Prioritize different actions based on distance_bin
             if left_obstacle and right_obstacle:
                 return self.BACKWARD
             elif left_obstacle:
                 return self.TURN_RIGHT
             elif right_obstacle:
                 return self.TURN_LEFT
-            elif angle_bin < self.angle_bins // 2:
-                return self.TURN_RIGHT
+            # Close to target (distance_bin < 2) - be more precise with turning
+            elif distance_bin < 2:
+                # Fine-grained angle adjustments when close to target
+                angle_offset = abs(angle_bin - self.angle_bins // 2)
+                if angle_offset <= 1:
+                    return self.FORWARD
+                elif angle_bin < self.angle_bins // 2:
+                    return self.TURN_RIGHT
+                else:
+                    return self.TURN_LEFT
+            # Medium distance (distance_bin < 4) - balance speed and direction
+            elif distance_bin < 4:
+                if angle_bin == self.angle_bins // 2:
+                    return self.FORWARD
+                elif angle_bin < self.angle_bins // 2:
+                    return self.TURN_RIGHT
+                else:
+                    return self.TURN_LEFT
+            # Far away (distance_bin >= 4) - prioritize rough alignment first
             else:
-                return self.TURN_LEFT
+                angle_offset = abs(angle_bin - self.angle_bins // 2)
+                if angle_offset <= 2:  # Roughly aligned, move forward quickly
+                    return self.FORWARD
+                elif angle_bin < self.angle_bins // 2:
+                    return self.TURN_RIGHT
+                else:
+                    return self.TURN_LEFT
 
         allow_stop = (
             current_distance is not None
@@ -142,18 +166,34 @@ class QLearningAgent:
 
         self.total_updates += 1
 
+        # Extract distance_bin from current state for distance-adaptive learning
+        distance_bin = state[0]
+
+        # Adjust learning rate based on distance - higher rates when close to target
+        distance_factor = max(
+            0.8, 2.0 - (distance_bin * 0.2)
+        )  # Higher factor for smaller distance_bin
+
         adaptive_learning_rate = max(
             self.min_learning_rate,
             self.learning_rate
+            * distance_factor  # Apply distance-based adjustment
             * (
                 RLConfig.LEARNING_RATE_DECAY_BASE
                 ** (self.total_updates / RLConfig.LEARNING_RATE_DECAY_DENOM)
             ),
         )
 
+        # Adjust discount factor based on distance - prioritize immediate rewards when closer
+        discount_distance_factor = min(
+            1.0, 0.7 + (distance_bin * 0.05)
+        )  # Lower factor for smaller distance
+
         adaptive_discount = max(
             self.min_discount_factor,
-            self.discount_factor * (0.9995 ** (self.total_updates / 5000)),
+            self.discount_factor
+            * discount_distance_factor
+            * (0.9995 ** (self.total_updates / 5000)),
         )
 
         self.learning_rates.append(adaptive_learning_rate)
@@ -168,16 +208,38 @@ class QLearningAgent:
         new_q = current_q + adaptive_learning_rate * td_error
         self.q_table[state][action] = max(-50.0, min(50.0, new_q))
 
-    def execute_action(self, action: int) -> List[float]:
-        """Return motor speeds for given action."""
+    def execute_action(self, action: int, state: Tuple = None) -> List[float]:
+        """Return motor speeds for given action, adjusted by distance if state available."""
+        # Default speeds
+        forward_speed = self.max_speed
+        turn_speed = self.max_speed / 2
+
+        # Adjust speeds based on distance_bin if state is provided
+        if state is not None:
+            distance_bin = state[0]
+
+            # Adjust speeds based on distance to target
+            if distance_bin < 2:  # Very close to target
+                forward_speed = self.max_speed * 0.6  # Slower, more precise movements
+                turn_speed = self.max_speed * 0.4
+            elif distance_bin < 4:  # Medium distance
+                forward_speed = self.max_speed * 0.8
+                turn_speed = self.max_speed * 0.6
+            else:  # Far away
+                forward_speed = self.max_speed  # Full speed
+                turn_speed = self.max_speed * 0.7
+
         if action == self.FORWARD:
-            return [self.max_speed, self.max_speed]
+            return [forward_speed, forward_speed]
         elif action == self.TURN_LEFT:
-            return [self.max_speed / 2, -self.max_speed / 2]
+            return [turn_speed, -turn_speed]
         elif action == self.TURN_RIGHT:
-            return [-self.max_speed / 2, self.max_speed / 2]
+            return [-turn_speed, turn_speed]
         elif action == self.BACKWARD:
-            return [-self.max_speed, -self.max_speed]
+            return [
+                -forward_speed * 0.7,
+                -forward_speed * 0.7,
+            ]
         elif action == self.STOP:
             return [0.0, 0.0]
         return [0.0, 0.0]

@@ -5,7 +5,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import logging
-from common.config import RLConfig, RobotConfig, SimulationConfig, get_logger
+from common.config import (
+    RLConfig,
+    RobotConfig,
+    SimulationConfig,
+    get_logger,
+    DATA_DIR,
+    Q_TABLE_PATH,
+)
 from common.rl_utils import calculate_distance
 from q_learning_agent import QLearningAgent
 
@@ -160,7 +167,7 @@ class Slave(Robot):
 
                 elif message == "load_q_table":
                     try:
-                        self.q_agent.load_q_table(SimulationConfig.Q_TABLE_PATH)
+                        self.q_agent.load_q_table(Q_TABLE_PATH)
                         logger.info("Q-table loaded from file")
                     except Exception as e:
                         logger.error(f"Error loading Q-table: {e}")
@@ -293,11 +300,13 @@ class Slave(Robot):
                 if current_distance < RLConfig.TARGET_THRESHOLD:
                     if not self.target_reached_reported:
                         logger.info("🎯 Target reached in SEEK_GOAL mode!")
+                        # Disable logging after reaching the goal
+                        logger.setLevel(logging.CRITICAL + 1)
                         self.target_reached_reported = True
                     speeds = [0.0, 0.0]
                 else:
                     action = self.q_agent.choose_best_action(state, current_distance)
-                    speeds = self.q_agent.execute_action(action)
+                    speeds = self.q_agent.execute_action(action, state)
 
             elif self.mode == self.Mode.LEARN:
                 position = None
@@ -338,7 +347,7 @@ class Slave(Robot):
                         action = self.current_persistent_action
                         self.action_persistence -= 1
 
-                    speeds = self.q_agent.execute_action(action)
+                    speeds = self.q_agent.execute_action(action, self.current_state)
                     self.last_action = action
 
             self.motors[0].setVelocity(speeds[0])
@@ -349,7 +358,7 @@ class Slave(Robot):
                     self.save_learning_progress()
                     self.plot_rewards()
 
-                self.q_agent.save_q_table(SimulationConfig.Q_TABLE_PATH)
+                self.q_agent.save_q_table(Q_TABLE_PATH)
                 logger.info("Robot controller exiting")
                 break
 
@@ -424,9 +433,8 @@ class Slave(Robot):
         plt.legend()
 
         try:
-            plot_dir = SimulationConfig.PLOT_DIR
-            os.makedirs(plot_dir, exist_ok=True)
-            plot_path = os.path.join(plot_dir, f"{self.robot_name}_learning.png")
+            os.makedirs(DATA_DIR, exist_ok=True)
+            plot_path = os.path.join(DATA_DIR, f"{self.robot_name}_learning.png")
             plt.savefig(plot_path)
             logger.info(f"Learning plot saved to {plot_path}")
         except Exception as e:
