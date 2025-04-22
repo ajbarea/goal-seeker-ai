@@ -1,13 +1,12 @@
 """Slave robot controller: obstacle avoidance, learning, and goal seeking."""
 
 from controller import AnsiCodes, Robot  # type: ignore
-import random
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 import logging
 from common.config import RLConfig, RobotConfig, SimulationConfig, get_logger
-from common.rl_utils import calculate_distance, get_action_name
+from common.rl_utils import calculate_distance
 from q_learning_agent import QLearningAgent
 
 # Set up logger
@@ -168,11 +167,7 @@ class Slave(Robot):
 
                 else:
                     if message.startswith(RLConfig.ACTION_COMMAND_PREFIX):
-                        try:
-                            current_action = int(message.split(":")[1])
-                            action_name = get_action_name(current_action)
-                        except (ValueError, IndexError):
-                            logger.info(f"Received command: {message}")
+                        logger.debug(f"Received action command: {message}")
                     elif (
                         not message.startswith("reward:")
                         and not message.startswith("seek goal:")
@@ -289,7 +284,22 @@ class Slave(Robot):
             elif self.mode == self.Mode.STOP:
                 speeds = [0.0, 0.0]
 
-            elif self.mode == self.Mode.SEEK_GOAL or self.mode == self.Mode.LEARN:
+            elif self.mode == self.Mode.SEEK_GOAL and self.target_position:
+                # Goal seeking using Q-learning policy
+                state = self.get_discrete_state()
+                current_distance = calculate_distance(
+                    self.position, self.target_position
+                )
+                if current_distance < RLConfig.TARGET_THRESHOLD:
+                    if not self.target_reached_reported:
+                        logger.info("🎯 Target reached in SEEK_GOAL mode!")
+                        self.target_reached_reported = True
+                    speeds = [0.0, 0.0]
+                else:
+                    action = self.q_agent.choose_best_action(state, current_distance)
+                    speeds = self.q_agent.execute_action(action)
+
+            elif self.mode == self.Mode.LEARN:
                 position = None
                 if self.gps:
                     try:
@@ -330,66 +340,6 @@ class Slave(Robot):
 
                     speeds = self.q_agent.execute_action(action)
                     self.last_action = action
-
-                elif self.mode == self.Mode.SEEK_GOAL and self.target_position:
-                    state = self.get_discrete_state()
-                    current_distance = calculate_distance(
-                        self.position, self.target_position
-                    )
-
-                    if current_distance < RLConfig.TARGET_THRESHOLD:
-                        if not self.target_reached_reported:
-                            logger.info("🎯 Target reached in SEEK_GOAL mode!")
-                            self.target_reached_reported = True
-
-                        speeds = [0.0, 0.0]
-                        self.motors[0].setVelocity(0.0)
-                        self.motors[1].setVelocity(0.0)
-                    else:
-                        if (
-                            self.target_reached_reported
-                            and current_distance > RLConfig.TARGET_THRESHOLD * 1.5
-                        ):
-                            self.target_reached_reported = False
-
-                        action = self.q_agent.choose_best_action(
-                            state, current_distance
-                        )
-
-                        if random.random() < 0.01:
-                            action_name = get_action_name(action)
-                            logger.debug(
-                                f"Goal seeking: state={state}, action={action_name}, "
-                                f"distance={current_distance:.2f}"
-                            )
-
-                        speeds = self.q_agent.execute_action(action)
-
-                        left_sensor = self.distanceSensors[0].getValue()
-                        right_sensor = self.distanceSensors[1].getValue()
-
-                        if left_sensor > 800 and right_sensor > 800:
-                            speeds = [-self.maxSpeed / 2, -self.maxSpeed / 2]
-                        elif left_sensor > 800:
-                            speeds = [self.maxSpeed / 2, -self.maxSpeed / 3]
-                        elif right_sensor > 800:
-                            speeds = [-self.maxSpeed / 3, self.maxSpeed / 2]
-
-                else:
-                    speeds[0] = self.boundSpeed(self.maxSpeed / 2 + 0.1 * delta)
-                    speeds[1] = self.boundSpeed(self.maxSpeed / 2 - 0.1 * delta)
-
-                    left_sensor = self.distanceSensors[0].getValue()
-                    right_sensor = self.distanceSensors[1].getValue()
-
-                    if left_sensor > 800 and right_sensor > 800:
-                        speeds = [-self.maxSpeed / 2, -self.maxSpeed / 2]
-                    elif left_sensor > 800:
-                        speeds[0] = self.maxSpeed / 2
-                        speeds[1] = -self.maxSpeed / 3
-                    elif right_sensor > 800:
-                        speeds[0] = -self.maxSpeed / 3
-                        speeds[1] = self.maxSpeed / 2
 
             self.motors[0].setVelocity(speeds[0])
             self.motors[1].setVelocity(speeds[1])
