@@ -11,8 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import logging
-from common.logger import get_logger
-from common.config import RLConfig, RobotConfig, SimulationConfig
+from common.config import RLConfig, RobotConfig, SimulationConfig, get_logger
 from common.rl_utils import calculate_distance, get_action_name
 from q_learning_agent import QLearningAgent
 

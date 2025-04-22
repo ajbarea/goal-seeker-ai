@@ -11,8 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from typing import List, Tuple, Optional
-from common.config import RLConfig
-from common.logger import get_logger
+from common.config import RLConfig, get_logger
 
 # Set up logger
 logger = get_logger(__name__)

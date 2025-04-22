@@ -3,12 +3,12 @@
 from controller import Supervisor  # type: ignore
 import logging
 import os
-from common.logger import get_logger
 from common.rl_utils import calculate_distance, plot_q_learning_progress
 from common.config import (
     SimulationConfig,
     RobotConfig,
     RLConfig,
+    get_logger,
 )
 from q_learning_controller import QLearningController
 

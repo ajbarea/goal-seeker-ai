@@ -9,9 +9,8 @@ import random
 import pickle
 import os
 from typing import Dict, List, Tuple, Optional
-from common.logger import get_logger
 from common.rl_utils import get_discrete_state
-from common.config import RLConfig
+from common.config import RLConfig, get_logger
 
 # Set up logger
 logger = get_logger(__name__)
