@@ -1,20 +1,20 @@
-"""Q-learning agent: state discretization, action selection, and Q-table updates."""
+"""Implement Q-learning agent with adaptive parameters and persistence."""
 
 import random
 import pickle
 import os
 from typing import Dict, List, Tuple, Optional
-from common.rl_utils import get_discrete_state
+from common.rl_utils import get_discrete_state, get_nearby_states
 from common.config import RLConfig, get_logger, Q_TABLE_PATH
 
-# Set up logger
+# Configure module-level logger
 logger = get_logger(__name__)
 
 
 class QLearningAgent:
-    """Manage Q-learning logic and table."""
+    """Implement Q-learning logic and Q-table updates."""
 
-    # Constants for action indices
+    # Action constants
     FORWARD = 0
     TURN_LEFT = 1
     TURN_RIGHT = 2
@@ -31,7 +31,7 @@ class QLearningAgent:
         max_speed: float = 10.0,
         angle_bins: int = 8,
     ):
-        """Init agent params and load Q-table."""
+        """Initialize agent settings and load existing Q-table."""
         self.learning_rate = learning_rate
         self.min_learning_rate = min_learning_rate
         self.discount_factor = discount_factor
@@ -61,7 +61,7 @@ class QLearningAgent:
         right_sensor: float,
         wheel_velocities: List[float],
     ) -> Optional[Tuple]:
-        """Wrap get_discrete_state from rl_utils."""
+        """Convert raw observations into discrete state bins."""
         return get_discrete_state(
             position,
             target_position,
@@ -73,7 +73,7 @@ class QLearningAgent:
         )
 
     def choose_action(self, state: Tuple, current_distance: float = None) -> int:
-        """Epsilon-greedy action choice."""
+        """Perform epsilon-greedy action selection."""
         if state not in self.q_table:
             self.q_table[state] = [0.0] * 5
 
@@ -97,22 +97,21 @@ class QLearningAgent:
         return random.choice(best_actions)
 
     def choose_best_action(self, state: Tuple, current_distance: float = None) -> int:
-        """Greedy action choice without exploration."""
+        """Select the best action with heuristics and optional blending."""
         if state not in self.q_table:
             self.q_table[state] = [0.0] * 5
 
             distance_bin, angle_bin, left_obstacle, right_obstacle, is_moving = state
 
-            # Prioritize different actions based on distance_bin
+            # Make intelligent decisions for new states based on situation
             if left_obstacle and right_obstacle:
                 return self.BACKWARD
             elif left_obstacle:
                 return self.TURN_RIGHT
             elif right_obstacle:
                 return self.TURN_LEFT
-            # Close to target (distance_bin < 2) - be more precise with turning
-            elif distance_bin < 2:
-                # Fine-grained angle adjustments when close to target
+            # Adjust precision based on distance to target
+            elif distance_bin < 2:  # Close to target
                 angle_offset = abs(angle_bin - self.angle_bins // 2)
                 if angle_offset <= 1:
                     return self.FORWARD
@@ -120,18 +119,16 @@ class QLearningAgent:
                     return self.TURN_RIGHT
                 else:
                     return self.TURN_LEFT
-            # Medium distance (distance_bin < 4) - balance speed and direction
-            elif distance_bin < 4:
+            elif distance_bin < 4:  # Medium distance
                 if angle_bin == self.angle_bins // 2:
                     return self.FORWARD
                 elif angle_bin < self.angle_bins // 2:
                     return self.TURN_RIGHT
                 else:
                     return self.TURN_LEFT
-            # Far away (distance_bin >= 4) - prioritize rough alignment first
-            else:
+            else:  # Far away
                 angle_offset = abs(angle_bin - self.angle_bins // 2)
-                if angle_offset <= 2:  # Roughly aligned, move forward quickly
+                if angle_offset <= 2:  # Roughly aligned
                     return self.FORWARD
                 elif angle_bin < self.angle_bins // 2:
                     return self.TURN_RIGHT
@@ -146,16 +143,63 @@ class QLearningAgent:
         if allow_stop:
             action_indices.append(4)
 
+        # Apply state blending for smoother transitions
+        if RLConfig.ENABLE_STATE_BLENDING:
+            return self.blend_nearby_states_action(
+                state, current_distance, action_indices
+            )
+
+        # Original action selection if blending is disabled
         q_values = self.q_table[state]
         filtered_q = [(i, q_values[i]) for i in action_indices]
         max_q_value = max(q for i, q in filtered_q)
         best_actions = [i for i, q in filtered_q if q == max_q_value]
         return random.choice(best_actions)
 
+    def blend_nearby_states_action(self, state, current_distance, action_indices):
+        """Blend actions from neighboring states for smoother transitions."""
+        # Get nearby states (similar distance or angle)
+        nearby_states = get_nearby_states(state)
+
+        # Calculate base Q-values for current state
+        current_q_values = self.q_table[state]
+
+        # Initialize blended Q-values with the current state's values
+        blended_q_values = current_q_values.copy()
+
+        # Count valid nearby states
+        valid_nearby_count = 0
+
+        # Blend with neighboring states
+        for nearby_state in nearby_states:
+            if nearby_state in self.q_table:
+                valid_nearby_count += 1
+                nearby_q_values = self.q_table[nearby_state]
+
+                # Apply blending
+                for i in range(len(blended_q_values)):
+                    blended_q_values[i] += (
+                        nearby_q_values[i] * RLConfig.STATE_BLENDING_FACTOR
+                    )
+
+        # Normalize based on number of valid neighbors
+        if valid_nearby_count > 0:
+            normalization_factor = 1.0 + (
+                valid_nearby_count * RLConfig.STATE_BLENDING_FACTOR
+            )
+            blended_q_values = [q / normalization_factor for q in blended_q_values]
+
+        # Filter to allowed actions
+        filtered_q = [(i, blended_q_values[i]) for i in action_indices]
+        max_q_value = max(q for i, q in filtered_q)
+        best_actions = [i for i, q in filtered_q if q == max_q_value]
+
+        return random.choice(best_actions)
+
     def update_q_table(
         self, state: Tuple, action: int, reward: float, next_state: Tuple
     ) -> None:
-        """Apply Q-learning update to the table."""
+        """Apply TD update with adaptive learning and discount rates."""
         if state is None or next_state is None:
             return
 
@@ -166,29 +210,22 @@ class QLearningAgent:
 
         self.total_updates += 1
 
-        # Extract distance_bin from current state for distance-adaptive learning
+        # Compute adaptive learning rate influenced by state distance bin
         distance_bin = state[0]
-
-        # Adjust learning rate based on distance - higher rates when close to target
-        distance_factor = max(
-            0.8, 2.0 - (distance_bin * 0.2)
-        )  # Higher factor for smaller distance_bin
+        distance_factor = max(0.8, 2.0 - (distance_bin * 0.2))
 
         adaptive_learning_rate = max(
             self.min_learning_rate,
             self.learning_rate
-            * distance_factor  # Apply distance-based adjustment
+            * distance_factor
             * (
                 RLConfig.LEARNING_RATE_DECAY_BASE
                 ** (self.total_updates / RLConfig.LEARNING_RATE_DECAY_DENOM)
             ),
         )
 
-        # Adjust discount factor based on distance - prioritize immediate rewards when closer
-        discount_distance_factor = min(
-            1.0, 0.7 + (distance_bin * 0.05)
-        )  # Lower factor for smaller distance
-
+        # Compute adaptive discount factor based on proximity to goal
+        discount_distance_factor = min(1.0, 0.7 + (distance_bin * 0.05))
         adaptive_discount = max(
             self.min_discount_factor,
             self.discount_factor
@@ -209,18 +246,17 @@ class QLearningAgent:
         self.q_table[state][action] = max(-50.0, min(50.0, new_q))
 
     def execute_action(self, action: int, state: Tuple = None) -> List[float]:
-        """Return motor speeds for given action, adjusted by distance if state available."""
+        """Translate action index into motor speed commands."""
         # Default speeds
         forward_speed = self.max_speed
         turn_speed = self.max_speed / 2
 
-        # Adjust speeds based on distance_bin if state is provided
+        # Adjust speeds based on distance if state is available
         if state is not None:
             distance_bin = state[0]
 
-            # Adjust speeds based on distance to target
             if distance_bin < 2:  # Very close to target
-                forward_speed = self.max_speed * 0.6  # Slower, more precise movements
+                forward_speed = self.max_speed * 0.6  # More precise movements
                 turn_speed = self.max_speed * 0.4
             elif distance_bin < 4:  # Medium distance
                 forward_speed = self.max_speed * 0.8
@@ -236,16 +272,13 @@ class QLearningAgent:
         elif action == self.TURN_RIGHT:
             return [-turn_speed, turn_speed]
         elif action == self.BACKWARD:
-            return [
-                -forward_speed * 0.7,
-                -forward_speed * 0.7,
-            ]
+            return [-forward_speed * 0.7, -forward_speed * 0.7]
         elif action == self.STOP:
             return [0.0, 0.0]
         return [0.0, 0.0]
 
     def save_q_table(self, filepath: str) -> bool:
-        """Save Q-table to file."""
+        """Persist the Q-table to disk."""
         try:
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "wb") as f:
@@ -258,7 +291,7 @@ class QLearningAgent:
             return False
 
     def load_q_table(self, filepath: str) -> bool:
-        """Load Q-table from file or init empty."""
+        """Load Q-table from disk or initialize empty table."""
         try:
             if os.path.exists(filepath):
                 with open(filepath, "rb") as f:

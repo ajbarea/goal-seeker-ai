@@ -14,6 +14,7 @@ This project demonstrates how reinforcement learning can be used to create self-
 
 - **Q-Learning Implementation**: Robot learns optimal navigation strategies through trial and error
 - **Adaptive Behavior**: Robot improves performance over time as it learns from experience
+- **Distance-Adaptive Control**: Motor speeds and action selection adjust based on proximity to target
 - **Goal-Seeking**: Robot can be directed to reach specific target positions
 - **Obstacle Avoidance**: Integrated sensors allow detection and avoidance of obstacles
 - **Performance Tracking**: Visual charts and statistics show learning progress
@@ -24,7 +25,7 @@ This project demonstrates how reinforcement learning can be used to create self-
 ```plaintext
 goal-seeker-ai/
 ├── common/
-│   ├── config.py        # Configuration parameters
+│   ├── config.py        # Configuration parameters and path management
 │   └── rl_utils.py      # Reinforcement Learning utilities
 │
 ├── controllers/
@@ -66,7 +67,7 @@ The project uses Q-learning, a model-free reinforcement learning algorithm:
 - **State Space**: Robot's position relative to target, sensor readings, and wheel velocities
 - **Action Space**: FORWARD, TURN_LEFT, TURN_RIGHT, BACKWARD, STOP
 - **Reward Function**: Sophisticated reward calculation based on distance improvements, orientation, and proximity to target
-- **Learning Parameters**: Adaptive exploration rate, learning rate, and discount factor
+- **Learning Parameters**: Adaptive exploration rate, learning rate, and discount factor based on distance to target
 
 ## Implementation Details
 
@@ -81,11 +82,13 @@ The robot's state is discretized into:
 
 ### Adaptive Behaviors
 
+- **Distance-Based Motor Control**: Robot moves more precisely when close to target and faster when far away
 - **Exploration vs. Exploitation**: Controlled by an adaptive exploration rate that decreases over time
 - **Action Persistence**: Dynamic action duration for smoother movement
-- **Learning Rate Adaptation**: Learning rate adjusts based on training progress
+- **Learning Rate Adaptation**: Learning rate increases when closer to target for more precise learning
 - **Discount Factor Adjustment**: Adapts based on proximity to goal and reward significance
 - **Random Movements**: Occasional random behaviors to escape local minimums
+- **Intelligent Action Selection**: Uses distance-based logic to choose optimal actions when Q-table entries are new
 - **Success Tracking**: Success rates tracked across episodes to measure improvement
 
 ### Visualization
@@ -108,7 +111,7 @@ The robot's state is discretized into:
 
 1. Press **L** to start the reinforcement learning process
 2. The robot will undergo multiple training episodes
-3. Learning statistics will be displayed in the console
+3. Learning statistics will be displayed in the console with emoji indicators for important events
 4. After training completes, the robot automatically switches to goal-seeking mode
 5. Performance plots are saved to the data directory
 

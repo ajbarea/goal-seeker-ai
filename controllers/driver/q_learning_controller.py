@@ -1,77 +1,81 @@
-"""Q-learning manager for training and goal seeking."""
+"""Manage Q-learning training sessions and goal seeking control flow."""
 
-from common.config import RLConfig, RobotConfig, SimulationConfig
+import os
+import shutil
+from common.config import (
+    RLConfig,
+    RobotConfig,
+    SimulationConfig,
+    DATA_DIR,
+    Q_TABLE_PATH,
+    BEST_Q_TABLE_PATH,
+)
 from common.rl_utils import calculate_distance, calculate_reward, get_action_name
 import random
 
 
 class QLearningController:
     def __init__(self, driver, logger):
-        """Init RL parameters and state."""
+        """Initialize Q-learning parameters and controller state."""
         self.driver = driver
         self.logger = logger
 
-        # Training parameters
+        # State tracking for training episodes
         self.episode_count = 0
         self.max_episodes = RLConfig.MAX_EPISODES
         self.training_active = False
         self.episode_step = 0
         self.max_steps = RLConfig.MAX_STEPS_PER_EPISODE
 
-        # Learning parameters
+        # Reinforcement learning hyperparameters
         self.exploration_rate = RLConfig.EXPLORATION_RATE
         self.min_exploration_rate = RLConfig.MIN_EXPLORATION_RATE
         self.exploration_decay = RLConfig.EXPLORATION_DECAY
 
-        # Target tracking
+        # Episode target and start position management
         self.target_positions = RobotConfig.TARGET_POSITIONS
         self.start_positions = RobotConfig.START_POSITIONS
         self.current_target_index = 0
         self.current_start_index = 0
 
-        # Performance tracking
+        # Metrics for performance and rewards
         self.successful_reaches = 0
         self.total_episodes_completed = 0
         self.rewards_history = []
         self.episode_rewards = []
 
-        # Action state tracking
+        # Action persistence and state tracking
         self.last_action = None
         self.action_counter = 0
         self.action_persistence = RLConfig.ACTION_PERSISTENCE_INITIAL
         self.previous_distance_to_target = None
 
-        # Goal seeking state
+        # Control state for goal-seeking phase
         self.goal_seeking_active = False
         self.goal_seeking_start_time = 0
         self.goal_reached = False
 
     def start_learning(self):
-        """Begin training episodes."""
-        self.logger.info("Starting learning process")
+        """Begin reinforcement learning training."""
+        self.logger.info("Starting reinforcement learning")
         self.training_active = True
         self.episode_count = 0
         self.reset_statistics()
         self.exploration_rate = RLConfig.EXPLORATION_RATE
 
-        self.load_q_table()
+        # Clear any old Q‑values on the slave
+        self.driver.emitter.send("clear_q_table".encode("utf-8"))
 
+        # Ensure robot is stopped before first episode
         self.last_action = None
         self.action_counter = 0
-
         self.driver.emitter.send("stop".encode("utf-8"))
         self.driver.step(RobotConfig.TIME_STEP)
 
-        target_position = self.target_positions[self.current_target_index]
-        target_msg = f"learn:{target_position[0]},{target_position[1]}"
-        self.driver.emitter.send(target_msg.encode("utf-8"))
-        self.driver.step(RobotConfig.TIME_STEP)
-
-        self.driver.emitter.send("start_learning".encode("utf-8"))
         self.start_new_episode()
 
     def reset_statistics(self):
-        """Clear session stats."""
+        """Reset training session statistics."""
         self.logger.info("Resetting learning statistics")
         self.episode_rewards = []
         self.rewards_history = []
@@ -80,7 +84,7 @@ class QLearningController:
         self.episode_step = 0
 
     def calculate_reward(self, current_position):
-        """Compute reward via centralized function."""
+        """Compute reward based on distance progress and penalties."""
         reward = calculate_reward(
             current_position[:2],
             self.driver.target_position,
@@ -96,7 +100,7 @@ class QLearningController:
         return reward
 
     def manage_training_step(self, position):
-        """Process one training iteration."""
+        """Process a single training timestep."""
         if not self.training_active:
             return
 
@@ -108,7 +112,7 @@ class QLearningController:
             self.driver.emitter.send(f"reward:{reward}".encode("utf-8"))
             self.episode_rewards.append(reward)
 
-            if SimulationConfig.ENABLE_DETAILED_LOGGING and self.episode_step % 50 == 0:
+            if SimulationConfig.ENABLE_DETAILED_LOGGING and self.episode_step % 75 == 0:
                 self.logger.info(
                     f"Training: Episode {self.episode_count}, Step {self.episode_step}, Distance {current_distance:.2f}, Reward:{reward:.2f}"
                 )
@@ -133,7 +137,7 @@ class QLearningController:
             self.complete_episode()
 
     def choose_action(self, current_distance):
-        """Epsilon-greedy action selection."""
+        """Select an action using an epsilon-greedy policy."""
         allow_stop = current_distance < RLConfig.TARGET_THRESHOLD
         action_indices = [0, 1, 2, 3]
         if allow_stop:
@@ -147,7 +151,7 @@ class QLearningController:
                 return 0
 
     def execute_action(self, action):
-        """Emit action to slave."""
+        """Send selected action command to the slave controller."""
         action_msg = f"{RLConfig.ACTION_COMMAND_PREFIX}{action}"
         self.driver.emitter.send(action_msg.encode("utf-8"))
 
@@ -155,7 +159,7 @@ class QLearningController:
             self.logger.debug(f"Executing action: {get_action_name(action)}")
 
     def start_new_episode(self):
-        """Initialize new episode state."""
+        """Configure state for a new training episode."""
         self.episode_count += 1
         self.episode_step = 0
         self.episode_rewards = []
@@ -194,22 +198,22 @@ class QLearningController:
         )
 
     def check_episode_complete(self, current_distance):
-        """Return True if episode ended."""
+        """Check whether the current episode should terminate."""
         self.episode_step += 1
 
         if current_distance < RLConfig.TARGET_THRESHOLD:
-            self.logger.info(f"Target reached! Distance: {current_distance:.2f}")
+            self.logger.info("🎯 Target reached!")
             self.successful_reaches += 1
             return True
 
         if self.episode_step >= self.max_steps:
-            self.logger.info(f"Episode timed out after {self.episode_step} steps")
+            self.logger.info(f"💥 Episode timed out after {self.episode_step} steps")
             return True
 
         return False
 
     def complete_episode(self):
-        """Finalize episode and prepare next."""
+        """Handle end-of-episode reporting and prepare the next episode."""
         self.total_episodes_completed += 1
 
         total_reward = sum(self.episode_rewards)
@@ -243,7 +247,7 @@ class QLearningController:
         self.start_new_episode()
 
     def end_training(self):
-        """Terminate training, save results, and switch to goal seeking."""
+        """Finalize training, save data, and transition to goal seeking mode."""
         self.training_active = False
         self.logger.info("Training complete")
 
@@ -252,20 +256,38 @@ class QLearningController:
             f"Final success rate: {success_rate:.1f}% ({self.successful_reaches}/{self.total_episodes_completed})"
         )
 
-        self.driver.emitter.send("stop".encode("utf-8"))
-
-        for _ in range(3):
-            self.driver.step(RobotConfig.TIME_STEP)
-
+        # Persist last run Q‑table
         self.save_q_table()
 
+        # Compare performance and update best
+        os.makedirs(DATA_DIR, exist_ok=True)
+        perf_file = os.path.join(DATA_DIR, "best_reward.txt")
+        current_perf = sum(self.rewards_history)
+        try:
+            best_perf = float(open(perf_file).read())
+        except Exception:
+            best_perf = float("-inf")
+        if current_perf > best_perf:
+            # Ensure BEST_Q_TABLE_PATH directory exists before copy
+            os.makedirs(os.path.dirname(BEST_Q_TABLE_PATH), exist_ok=True)
+            shutil.copy(Q_TABLE_PATH, BEST_Q_TABLE_PATH)
+            with open(perf_file, "w") as f:
+                f.write(str(current_perf))
+            self.logger.info(f"New best Q‑table (reward={current_perf:.1f}) saved")
+        else:
+            self.logger.info(
+                f"Best Q‑table retained (best={best_perf:.1f} vs current={current_perf:.1f})"
+            )
+
+        # Show training plot
         self.driver.plot_training_results(self.rewards_history)
 
-        self.logger.info("Starting post-training goal seeking...")
+        # Now load the best table and switch to goal seeking
+        self.logger.info("Starting post-training goal seeking with BEST Q‑table")
         self.start_goal_seeking()
 
     def start_goal_seeking(self):
-        """Enter goal-seeking mode using learned policy."""
+        """Initiate goal seeking behavior with the learned Q-policy."""
         target_position = self.target_positions[self.current_target_index]
 
         start_position = self.start_positions[self.current_start_index]
@@ -278,6 +300,9 @@ class QLearningController:
             self.driver.step(RobotConfig.TIME_STEP)
 
         self.driver.clear_pending_commands()
+
+        # Load best policy
+        self.driver.emitter.send("load_best_q_table".encode("utf-8"))
 
         seek_message = f"seek goal:{target_position[0]},{target_position[1]}"
         self.driver.emitter.send(seek_message.encode("utf-8"))
@@ -292,7 +317,7 @@ class QLearningController:
         self.goal_reached = False
 
     def save_q_table(self):
-        """Request slave to save Q-table."""
+        """Instruct slave to save the Q-table to storage."""
         try:
             self.driver.emitter.send("save_q_table".encode("utf-8"))
             self.logger.info("Requested slave to save Q-table")
@@ -300,7 +325,7 @@ class QLearningController:
             self.logger.error(f"Error requesting Q-table save: {e}")
 
     def load_q_table(self):
-        """Request slave to load Q-table."""
+        """Instruct slave to load the existing Q-table."""
         try:
             self.driver.emitter.send("load_q_table".encode("utf-8"))
             self.logger.info("Requested slave to load Q-table")

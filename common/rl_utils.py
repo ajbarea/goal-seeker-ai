@@ -1,4 +1,4 @@
-"""RL utilities: state discretization, reward calc, and plotting."""
+"""Reinforcement learning utilities for state discretization, reward computation, and progress visualization."""
 
 import math
 import numpy as np
@@ -19,16 +19,16 @@ def get_discrete_state(
     wheel_velocities: List[float],
     angle_bins: int = 8,
 ) -> Optional[Tuple]:
-    """Return discrete state tuple for Q-learning."""
+    """Compute a discrete state tuple for Q‑learning."""
     if not position or not target_position:
         return None
 
-    # Distance & relative angle to target
+    # Compute Euclidean distance and relative angle to the target
     distance = calculate_distance(position, target_position)
     dx, dy = target_position[0] - position[0], target_position[1] - position[1]
     rel_angle = normalize_angle(math.atan2(dy, dx) - orientation)
 
-    # Discretize inputs
+    # Convert continuous observations into discrete state bins
     distance_bin = discretize_distance(distance)
     angle_bin = int((rel_angle + math.pi) / (2 * math.pi / angle_bins)) % angle_bins
     left_obs, right_obs = discretize_sensor(left_sensor), discretize_sensor(
@@ -40,7 +40,7 @@ def get_discrete_state(
 
 
 def discretize_distance(distance: float) -> int:
-    """Map distance to bin 0–6."""
+    """Discretize continuous distance into bins 0–6."""
     if distance < 0.1:
         return 0
     elif distance < 0.25:
@@ -58,7 +58,7 @@ def discretize_distance(distance: float) -> int:
 
 
 def discretize_sensor(sensor_value: float) -> int:
-    """Map sensor reading to state 0–3."""
+    """Discretize sensor reading into states 0–3 based on thresholds."""
     if sensor_value < 100:
         return 0
     elif sensor_value < 400:
@@ -70,7 +70,7 @@ def discretize_sensor(sensor_value: float) -> int:
 
 
 def discretize_velocity(wheel_velocities: List[float]) -> int:
-    """Map wheel velocities to movement states 0–4."""
+    """Determine discrete motion state (0–4) from wheel velocities."""
     left_vel = wheel_velocities[0]
     right_vel = wheel_velocities[1]
     avg_speed = (abs(left_vel) + abs(right_vel)) / 2
@@ -96,11 +96,11 @@ def calculate_reward(
     orientation: Optional[float] = None,
     wheel_velocities: Optional[List[float]] = None,
 ) -> float:
-    """Compute reward based on distance progress, orientation, and motion penalties."""
+    """Compute the reward based on distance progress, orientation, and motion penalties."""
     current_distance = calculate_distance(current_position[:2], target_position)
 
     if current_distance < target_threshold:
-        return 100.0
+        return RLConfig.TARGET_REACHED_REWARD
 
     if previous_distance is None:
         return 0.0
@@ -146,7 +146,7 @@ def calculate_reward(
 
 
 def get_action_name(action: int) -> str:
-    """Translate action index to name."""
+    """Return the descriptive name for a given action index."""
     action_names = ["FORWARD", "TURN_LEFT", "TURN_RIGHT", "BACKWARD", "STOP"]
     if 0 <= action < len(action_names):
         return action_names[action]
@@ -154,12 +154,12 @@ def get_action_name(action: int) -> str:
 
 
 def calculate_distance(p1: List[float], p2: List[float]) -> float:
-    """Compute Euclidean distance between two points."""
+    """Compute the Euclidean distance between two 2D points."""
     return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
 
 
 def normalize_angle(angle: float) -> float:
-    """Normalize an angle to [-π, π]."""
+    """Normalize an angle to the range [–π, π]."""
     while angle > math.pi:
         angle -= 2 * math.pi
     while angle < -math.pi:
@@ -176,7 +176,7 @@ def plot_q_learning_progress(
     filename: Optional[str] = None,
     save_dir: Optional[str] = None,
 ) -> None:
-    """Plot rewards: raw, moving averages, cumulative avg, and EMA."""
+    """Plot reward history with moving averages and exponential moving average."""
     if not rewards:
         logger.warning("No rewards to plot")
         return
@@ -228,3 +228,44 @@ def plot_q_learning_progress(
 
     plt.show()
     plt.close()
+
+
+def get_nearby_states(state: Tuple) -> List[Tuple]:
+    """Return neighboring states for state blending."""
+    distance_bin, angle_bin, left_obstacle, right_obstacle, is_moving = state
+    nearby_states = []
+
+    # Add states with similar distance
+    for d_offset in [-1, 1]:
+        new_distance = distance_bin + d_offset
+        if 0 <= new_distance <= 6:  # Valid distance bin range
+            nearby_states.append(
+                (new_distance, angle_bin, left_obstacle, right_obstacle, is_moving)
+            )
+
+    # Add states with similar angle
+    max_angle_bin = 8 - 1  # Assuming 8 angle bins (0-7)
+    for a_offset in [-1, 1]:
+        new_angle = (angle_bin + a_offset) % (max_angle_bin + 1)  # Wrap around
+        nearby_states.append(
+            (distance_bin, new_angle, left_obstacle, right_obstacle, is_moving)
+        )
+
+    return nearby_states
+
+
+def is_similar_position(
+    pos1: List[float], pos2: List[float], threshold: float = 0.05
+) -> bool:
+    """Determine whether two positions are within a given threshold."""
+    return calculate_distance(pos1, pos2) < threshold
+
+
+def get_position_cluster(
+    positions: List[List[float]], new_pos: List[float], threshold: float = 0.05
+) -> int:
+    """Assign a new position to an existing cluster or return –1 if none match."""
+    for i, pos in enumerate(positions):
+        if is_similar_position(pos, new_pos, threshold):
+            return i
+    return -1  # No matching cluster
