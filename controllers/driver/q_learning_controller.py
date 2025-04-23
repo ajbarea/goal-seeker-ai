@@ -202,7 +202,7 @@ class QLearningController:
         self.episode_step += 1
 
         if current_distance < RLConfig.TARGET_THRESHOLD:
-            self.logger.info("🎯 Target reached!")
+            self.logger.info("🎯 Target reached in LEARN mode!")
             self.successful_reaches += 1
             return True
 

@@ -137,7 +137,9 @@ class Driver(Supervisor):
                 elapsed_time = (
                     self.getTime() - self.rl_controller.goal_seeking_start_time
                 )
-                self.logger.info(f"Goal reached in {elapsed_time:.1f} seconds")
+                self.logger.info(
+                    f"🎯 Successfully reached target in SEEK_GOAL mode after {elapsed_time:.1f} seconds"
+                )
 
                 # Disable goal seeking to prevent further timeout checks
                 self.rl_controller.goal_seeking_active = False

@@ -46,6 +46,7 @@ class QLearningAgent:
         self.td_errors: List[float] = []
         self.learning_rates: List[float] = []
         self.discount_factors: List[float] = []
+        self.rng = random.Random()
 
         try:
             self.load_q_table(Q_TABLE_PATH)
@@ -85,16 +86,16 @@ class QLearningAgent:
         if allow_stop:
             action_indices.append(4)
 
-        if random.random() < self.exploration_rate:
-            if random.random() < 0.5 and 0 in action_indices:
+        if self.rng.random() < self.exploration_rate:
+            if self.rng.random() < 0.5 and 0 in action_indices:
                 return 0
-            return random.choice(action_indices)
+            return self.rng.choice(action_indices)
 
         q_values = self.q_table[state]
         filtered_q = [(i, q_values[i]) for i in action_indices]
         max_q_value = max(q for i, q in filtered_q)
         best_actions = [i for i, q in filtered_q if q == max_q_value]
-        return random.choice(best_actions)
+        return self.rng.choice(best_actions)
 
     def choose_best_action(self, state: Tuple, current_distance: float = None) -> int:
         """Select the best action with heuristics and optional blending."""
@@ -154,7 +155,7 @@ class QLearningAgent:
         filtered_q = [(i, q_values[i]) for i in action_indices]
         max_q_value = max(q for i, q in filtered_q)
         best_actions = [i for i, q in filtered_q if q == max_q_value]
-        return random.choice(best_actions)
+        return self.rng.choice(best_actions)
 
     def blend_nearby_states_action(self, state, current_distance, action_indices):
         """Blend actions from neighboring states for smoother transitions."""
@@ -194,7 +195,7 @@ class QLearningAgent:
         max_q_value = max(q for i, q in filtered_q)
         best_actions = [i for i, q in filtered_q if q == max_q_value]
 
-        return random.choice(best_actions)
+        return self.rng.choice(best_actions)
 
     def update_q_table(
         self, state: Tuple, action: int, reward: float, next_state: Tuple

@@ -121,6 +121,7 @@ class Slave(Robot):
         self.action_persistence = 0
         self.action_persistence_duration = RLConfig.ACTION_PERSISTENCE_INITIAL
         self.current_persistent_action = None
+        self.rng = random.Random()
 
         # Position history tracking
         self.position_history = deque(maxlen=RLConfig.POSITION_MEMORY_SIZE)
@@ -218,7 +219,7 @@ class Slave(Robot):
                     # Calculate direct vector to target
                     if self.target_position and self.position:
                         # Simple direct turn in a random direction to break symmetry
-                        turn_left = random.random() > 0.5
+                        turn_left = self.rng.random() > 0.5
 
                         # Execute a series of movements to reorient
                         if turn_left:
@@ -268,7 +269,7 @@ class Slave(Robot):
                             break
 
                     # Rotate randomly to explore new paths
-                    if random.random() < 0.5:
+                    if self.rng.random() < 0.5:
                         # Turn left
                         self.motors[0].setVelocity(self.maxSpeed * 0.8)
                         self.motors[1].setVelocity(-self.maxSpeed * 0.8)
@@ -277,7 +278,7 @@ class Slave(Robot):
                         self.motors[0].setVelocity(-self.maxSpeed * 0.8)
                         self.motors[1].setVelocity(self.maxSpeed * 0.8)
 
-                    for _ in range(random.randint(8, 15)):  # Random turn duration
+                    for _ in range(self.rng.randint(8, 15)):  # Random turn duration
                         if self.step(self.timeStep) == -1:
                             break
 
@@ -729,8 +730,8 @@ class Slave(Robot):
     def execute_random_exploration(self, intensity):
         """Perform random exploration to escape stuck situations."""
         # Backup in a random direction
-        left_speed = -self.maxSpeed * (0.6 + random.random() * 0.4) * intensity
-        right_speed = -self.maxSpeed * (0.6 + random.random() * 0.4) * intensity
+        left_speed = -self.maxSpeed * (0.6 + self.rng.random() * 0.4) * intensity
+        right_speed = -self.maxSpeed * (0.6 + self.rng.random() * 0.4) * intensity
 
         self.motors[0].setVelocity(left_speed)
         self.motors[1].setVelocity(right_speed)
@@ -740,14 +741,14 @@ class Slave(Robot):
                 break
 
         # Make a random turn
-        if random.random() < 0.5:
+        if self.rng.random() < 0.5:
             self.motors[0].setVelocity(self.maxSpeed * intensity)
             self.motors[1].setVelocity(-self.maxSpeed * intensity)
         else:
             self.motors[0].setVelocity(-self.maxSpeed * intensity)
             self.motors[1].setVelocity(self.maxSpeed * intensity)
 
-        turn_duration = random.randint(8, 15)
+        turn_duration = self.rng.randint(8, 15)
         for _ in range(int(turn_duration * intensity)):
             if self.step(self.timeStep) == -1:
                 break
