@@ -39,19 +39,12 @@ class QLearningAgent:
         self.exploration_rate = exploration_rate
         self.max_speed = max_speed
         self.angle_bins = angle_bins
-
         self.q_table: Dict[Tuple, List[float]] = {}
         self.total_updates = 0
-
         self.td_errors: List[float] = []
         self.learning_rates: List[float] = []
         self.discount_factors: List[float] = []
         self.rng = random.Random()
-
-        try:
-            self.load_q_table(Q_TABLE_PATH)
-        except Exception as e:
-            logger.warning(f"Could not load Q-table: {e}")
 
     def get_discrete_state(
         self,
