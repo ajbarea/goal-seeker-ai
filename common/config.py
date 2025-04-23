@@ -1,19 +1,71 @@
-"""
-Configuration module for robot learning parameters and simulation settings.
-"""
+"""Configuration and logging setup for reinforcement learning and simulation."""
 
+import logging
 import os
+from datetime import datetime
 
-# Data directory
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data"))
 Q_TABLE_PATH = os.path.join(DATA_DIR, "q_table.pkl")
-PLOT_DIR = DATA_DIR
+BEST_Q_TABLE_PATH = os.path.join(DATA_DIR, "best_q_table.pkl")
+
+
+def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
+    """Create and configure a logger with console output and optional file logging.
+
+    Args:
+        name (str): Logger identifier.
+        level (int): Minimum logging level.
+        log_to_file (bool): If True, write logs to a file.
+        log_dir (str): Directory path for log files.
+
+    Returns:
+        logging.Logger: Configured logger instance.
+    """
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+
+    # Clear existing handlers to avoid duplicate log entries
+    if logger.handlers:
+        logger.handlers.clear()
+
+    # Configure console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+
+    # Define log message format for log records
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # Configure file logging if enabled
+    if log_to_file:
+        # Ensure log directory exists for file logging
+        os.makedirs(log_dir, exist_ok=True)
+
+        # Construct timestamped log filename for log file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(log_dir, f"{name.split('.')[-1]}_{timestamp}.log")
+
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+
+    return logger
+
+
+def get_logger(name, level=logging.INFO, log_to_file=False):
+    """Shortcut to create a logger with optional file output."""
+    return setup_logger(name, level, log_to_file)
 
 
 class RLConfig:
-    """Reinforcement learning configuration parameters."""
+    """Reinforcement learning hyperparameters and limits."""
 
-    # Core RL parameters
+    # Core RL hyperparameters
     LEARNING_RATE = 0.1
     MIN_LEARNING_RATE = 0.03
     DISCOUNT_FACTOR = 0.95
@@ -24,62 +76,71 @@ class RLConfig:
     LEARNING_RATE_DECAY_BASE = 0.9995
     LEARNING_RATE_DECAY_DENOM = 20000
 
-    # Episode parameters
+    # Episode limits
     MAX_EPISODES = 100
     MAX_STEPS_PER_EPISODE = 600
 
-    # Action parameters - adjust for smoother control
+    # Action persistence parameters
     ACTION_PERSISTENCE_INITIAL = 3
     ACTION_PERSISTENCE_MIN = 1
     ACTION_PERSISTENCE_DECAY = 0.95
 
-    # Target and reward parameters
+    # Target and reward configuration
     TARGET_THRESHOLD = 0.15
+    TARGET_REACHED_REWARD = 20.0  # Reward for reaching the target
 
-    # Small negative reward for each step
-    STEP_PENALTY = 0.1
+    # Negative reward applied each step
+    STEP_PENALTY = 0.2
 
-    # Command protocol for sending actions to slave
+    # Protocol prefix for action commands to the slave controller
     ACTION_COMMAND_PREFIX = "exec_action:"
 
-    # Default path for Q-table
-    Q_TABLE_PATH: str = Q_TABLE_PATH
+    # Stuck detection and recovery
+    POSITION_MEMORY_SIZE = 20  # Number of previous positions to remember
+    POSITION_MEMORY_THRESHOLD = 0.05  # Distance threshold to consider positions similar
+    STUCK_POSITION_PENALTY = (
+        -2.0
+    )  # Penalty for revisiting positions where robot got stuck
+
+    # State blending
+    ENABLE_STATE_BLENDING = True
+    STATE_BLENDING_FACTOR = 0.3  # Weight given to nearby states
+
+    # Dynamic approach strategies
+    PRECISION_APPROACH_DISTANCE = 0.8  # Distance to switch to precision approach
 
 
 class RobotConfig:
-    """Robot configuration parameters."""
+    """Physical parameters and start/target positions for the robot."""
 
-    # Robot physical parameters
+    # Physical parameters of the robot
     MAX_SPEED = 10.0
     TIME_STEP = 64
     DEFAULT_POSITION = [0.0, 0.0, 0.0]
 
-    # Target positions for training
-    # TARGET_POSITIONS = [[0.62, -0.61], [0.5, 0.5], [-0.5, 0.5]]
+    # Positions used as targets during training
     TARGET_POSITIONS = [[0.62, -0.61]]
 
-    # Starting positions for training
-    # START_POSITIONS = [[0.0, 0.0, 0.0], [0.0, 0.3, 0.0], [-0.3, 0.0, 0.0]]
+    # Initial positions for training episodes
     START_POSITIONS = [[0.0, 0.0, 0.0]]
 
 
 class SimulationConfig:
-    """Simulation and logging configuration."""
+    """Simulation settings and logging options."""
 
-    # Logging parameters
+    # Logging levels and output options
     LOG_LEVEL_DRIVER = "INFO"
     LOG_LEVEL_SLAVE = "INFO"
     LOG_TO_FILE = True
 
-    # Reporting frequencies
+    # Frequency for position updates
     POSITION_UPDATE_FREQ = 5
 
-    # File paths
-    Q_TABLE_PATH = Q_TABLE_PATH
-    PLOT_DIR = PLOT_DIR
-
-    # Message protocol configuration
+    # Detailed messaging configuration
     ENABLE_DETAILED_LOGGING = True
 
-    # Goal seeking parameters
-    GOAL_SEEKING_TIMEOUT = 500  # Timeout for goal seeking in seconds
+    # Timeout for goal seeking (seconds)
+    GOAL_SEEKING_TIMEOUT = 500
+
+    # Stuck detection threshold
+    STUCK_THRESHOLD = 3

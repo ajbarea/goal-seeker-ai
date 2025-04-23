@@ -1,14 +1,15 @@
-"""Supervisor controller for robot simulation."""
+"""Manage robot simulation, reinforcement learning, goal seeking, and manual commands."""
 
 from controller import Supervisor  # type: ignore
 import logging
 import os
-from common.logger import get_logger
 from common.rl_utils import calculate_distance, plot_q_learning_progress
 from common.config import (
     SimulationConfig,
     RobotConfig,
     RLConfig,
+    get_logger,
+    DATA_DIR,
 )
 from q_learning_controller import QLearningController
 
@@ -17,9 +18,10 @@ class Driver(Supervisor):
     TIME_STEP = RobotConfig.TIME_STEP
 
     def __init__(self):
+        """Initialize devices, logger, and RL controller."""
         super(Driver, self).__init__()
 
-        # Basic setup
+        # Initialize logger and interface devices
         self.logger = get_logger(
             __name__, level=getattr(logging, SimulationConfig.LOG_LEVEL_DRIVER, "INFO")
         )
@@ -27,44 +29,45 @@ class Driver(Supervisor):
         self.keyboard = self.getKeyboard()
         self.keyboard.enable(self.TIME_STEP)
 
-        # Robot reference
+        # Retrieve robot node and translation field
         self.robot = self.getFromDef("ROBOT1")
         self.translation_field = self.robot.getField("translation")
 
-        # Navigation and positioning
+        # Initialize target tracking state
         self.target_position = None
         self.previous_distance_to_target = None
 
-        # Create RL controller
+        # Initialize Q-learning controller
         self.rl_controller = QLearningController(self, self.logger)
 
-        # Step counter for periodic tasks
+        # Initialize simulation step counter
         self.step_counter = 0
 
+        # Log initialization status
         self.logger.info("Driver initialization complete")
         self.logger.info("Press 'I' for help")
 
     def run(self):
-        """Main control loop."""
+        """Run the simulation loop to handle RL training, goal seeking, and manual inputs."""
         self.display_help()
         previous_message = ""
 
         while True:
-            # Increment step counter
+            # Increment simulation step counter
             self.step_counter += 1
 
-            # Send robot position information periodically
+            # Periodically send robot position updates
             if self.step_counter % SimulationConfig.POSITION_UPDATE_FREQ == 0:
                 position = self.translation_field.getSFVec3f()
                 pos_message = f"position:{position[0]},{position[1]}"
                 self.emitter.send(pos_message.encode("utf-8"))
 
-            # Handle reinforcement learning training if active
+            # Handle active RL training steps
             if self.rl_controller.training_active:
                 position = self.translation_field.getSFVec3f()
                 self.rl_controller.manage_training_step(position)
 
-            # Handle goal seeking if active
+            # Handle active goal seeking behavior
             elif (
                 hasattr(self.rl_controller, "goal_seeking_active")
                 and self.rl_controller.goal_seeking_active
@@ -72,7 +75,7 @@ class Driver(Supervisor):
                 position = self.translation_field.getSFVec3f()
                 self.monitor_goal_seeking(position)
 
-            # Handle keyboard input and basic robot control
+            # Process manual keyboard commands
             k = self.keyboard.getKey()
             message = ""
 
@@ -102,86 +105,103 @@ class Driver(Supervisor):
                 self.emitter.send(message.encode("utf-8"))
 
             if self.step(self.TIME_STEP) == -1:
+                # Save Q-table and terminate simulation
                 self.rl_controller.save_q_table()
                 break
 
     def clear_pending_commands(self):
-        """Clear any pending commands in the message queue to ensure clean state."""
+        """Advance simulation steps to clear pending commands."""
         # Just step the simulation a few times without sending commands
         for _ in range(5):
             self.step(self.TIME_STEP)
         return
 
     def monitor_goal_seeking(self, position):
-        """
-        Monitor the robot's progress toward the goal during goal-seeking behavior.
-        Enhanced with insights from old_code.py.
-        """
+        """Monitor goal seeking progress, detect stuck conditions, and enforce timeout."""
         if not self.target_position:
             return
 
-        # Calculate current distance to target
+        # Compute current distance to the target
         current_distance = calculate_distance(position[:2], self.target_position)
 
-        # Check if the robot has reached the target
+        # Check for target reached condition
         if current_distance < RLConfig.TARGET_THRESHOLD:
             if not getattr(self.rl_controller, "goal_reached", False):
                 self.rl_controller.goal_reached = True
 
-                # Send stop command to the robot multiple times to ensure it stops
-                for _ in range(3):
-                    self.emitter.send("stop".encode("utf-8"))
-                    self.step(self.TIME_STEP)
+                # Send stop command
+                self.emitter.send("stop".encode("utf-8"))
+                self.step(self.TIME_STEP)
 
-                # Report success time
+                # Log time taken to reach the goal
                 elapsed_time = (
                     self.getTime() - self.rl_controller.goal_seeking_start_time
                 )
-                self.logger.info(f"Goal reached in {elapsed_time:.1f} seconds")
+                self.logger.info(
+                    f"🎯 Successfully reached target in SEEK_GOAL mode after {elapsed_time:.1f} seconds"
+                )
 
-                # Disable further goal seeking checks to prevent timeout
+                # Disable goal seeking to prevent further timeout checks
                 self.rl_controller.goal_seeking_active = False
                 return
+            else:
+                # Target already reached; skip further actions
+                return
 
-        # Check for timeout
+        # Check for goal seeking timeout
         current_time = self.getTime()
         elapsed_time = current_time - self.rl_controller.goal_seeking_start_time
 
-        # Provide periodic progress updates during goal seeking
-        if (
-            not getattr(self.rl_controller, "goal_reached", False)
-            and self.step_counter % 100 == 0
-        ):
+        # Periodically log goal seeking progress
+        if self.step_counter % 100 == 0:
+            # Avoid logging when very close to the target
+            if current_distance < RLConfig.TARGET_THRESHOLD * 1.2:
+                return
+
             self.logger.info(
                 f"Goal seeking in progress - Distance: {current_distance:.2f}, "
                 f"Time elapsed: {elapsed_time:.1f}s"
             )
 
-            # Check if robot is stuck (not making progress)
+            # Detect if robot is stuck based on minimal progress
             if hasattr(self, "last_goal_seeking_distance"):
-                # If distance hasn't changed much in last check
                 if abs(current_distance - self.last_goal_seeking_distance) < 0.05:
                     self.stuck_counter = getattr(self, "stuck_counter", 0) + 1
-                    if self.stuck_counter >= 6:  # Stuck for 6 consecutive checks
+                    if (
+                        self.stuck_counter >= SimulationConfig.STUCK_THRESHOLD
+                    ):  # Stuck for threshold number of checks
                         self.logger.info(
-                            f"Robot appears stuck at distance {current_distance:.2f}. Sending randomize command."
+                            f"🤔 Robot stuck at distance {current_distance:.2f}. Attempting recovery..."
                         )
-                        self.emitter.send("randomize".encode("utf-8"))
-                        self.stuck_counter = 0
+                        # Attempt repositioning; randomize movements on repeated failures
+                        if self.stuck_counter in (
+                            SimulationConfig.STUCK_THRESHOLD,
+                            SimulationConfig.STUCK_THRESHOLD + 2,
+                        ):
+                            self.emitter.send("reposition".encode("utf-8"))
+                            self.stuck_counter += 1
+                        else:
+                            self.logger.info(
+                                f"🔄 Reposition failed; issue random movement command at distance {current_distance:.2f}."
+                            )
+                            self.emitter.send("randomize".encode("utf-8"))
+                            self.stuck_counter = 0
                 else:
                     self.stuck_counter = 0
 
-            # Update last distance
+            # Update recorded distance for next check
             self.last_goal_seeking_distance = current_distance
 
-        # Check for timeout with extended time for goal seeking
+        # Enforce maximum goal seeking duration
         if elapsed_time > SimulationConfig.GOAL_SEEKING_TIMEOUT:
-            self.logger.info(f"Goal seeking timed out after {elapsed_time:.1f} seconds")
+            self.logger.info(
+                f"💥 Mission failed! Robot got distracted and timed out after {elapsed_time:.1f} seconds."
+            )
             self.rl_controller.goal_seeking_active = False
             self.emitter.send("stop".encode("utf-8"))
 
     def display_help(self):
-        """Display available keyboard commands."""
+        """Log available keyboard commands."""
         self.logger.info(
             "\nCommands:\n"
             " I - Display this help message\n"
@@ -195,21 +215,24 @@ class Driver(Supervisor):
         )
 
     def safely_reset_robot(self):
-        """Safely reset the robot to its default position."""
+        """Reset robot to default position and resume obstacle avoidance."""
         self.emitter.send("stop".encode("utf-8"))
         self.step(self.TIME_STEP)
         self.robot.resetPhysics()
         self.translation_field.setSFVec3f(RobotConfig.DEFAULT_POSITION)
         for _ in range(5):
             self.step(self.TIME_STEP)
-        self.logger.info("Robot reset to default position")
+
+        # Resume obstacle avoidance mode after reset
+        self.emitter.send("avoid obstacles".encode("utf-8"))
+        self.step(self.TIME_STEP)
+
+        self.logger.info(
+            "Robot reset to default position and set to avoid obstacles mode"
+        )
 
     def reset_robot_position(self, position):
-        """Reset the robot to a specific position with proper physics reset.
-
-        Args:
-            position (list): The [x, y, z] position to reset to.
-        """
+        """Reset robot to specified position with random offset and reset physics."""
         # Add small random offset for variability
         import random
 
@@ -221,10 +244,11 @@ class Driver(Supervisor):
             position[2],
         ]
 
-        # Send stop command first
-        self.emitter.send("stop".encode("utf-8"))
-        for _ in range(3):  # Multiple steps to ensure stop is processed
-            self.step(self.TIME_STEP)
+        # Send stop command if not already in training mode
+        if not getattr(self.rl_controller, "training_active", False):
+            self.emitter.send("stop".encode("utf-8"))
+            for _ in range(3):  # Multiple steps to ensure stop is processed
+                self.step(self.TIME_STEP)
 
         # Reset orientation to upright
         rotation_field = self.robot.getField("rotation")
@@ -250,30 +274,32 @@ class Driver(Supervisor):
         for _ in range(5):
             self.step(self.TIME_STEP)
 
-        # Initialize with obstacle avoidance before learning
-        self.emitter.send("avoid obstacles".encode("utf-8"))
-        self.step(self.TIME_STEP * 2)
+        # Initialize with obstacle avoidance before learning,
+        # but only if not already in training mode
+        if not getattr(self.rl_controller, "training_active", False):
+            self.emitter.send("avoid obstacles".encode("utf-8"))
+            self.step(self.TIME_STEP * 2)
 
         self.logger.debug(f"Robot reset to position: {randomized_position}")
 
     def set_target_position(self, target_position):
-        """Set the target position for the robot."""
+        """Set the target position."""
         self.target_position = target_position
 
     def plot_training_results(self, rewards):
-        """Plot the training results."""
+        """Plot and save training reward history."""
         if not rewards:
             self.logger.warning("No rewards to plot")
             return
 
         try:
-            # Create directory if it doesn't exist
-            os.makedirs(SimulationConfig.PLOT_DIR, exist_ok=True)
+            # Ensure data directory exists
+            os.makedirs(DATA_DIR, exist_ok=True)
 
-            # Create episode numbers based on actual rewards length
+            # Generate episode index list
             episodes = list(range(1, len(rewards) + 1))
 
-            # Ensure episodes and rewards have same length
+            # Verify matching lengths for episodes and rewards
             if len(episodes) != len(rewards):
                 self.logger.warning(
                     f"Length mismatch: episodes({len(episodes)}) != rewards({len(rewards)})"
@@ -283,15 +309,15 @@ class Driver(Supervisor):
                 episodes = episodes[:min_len]
                 rewards = rewards[:min_len]
 
-            # Plot Q‑learning progress
+            # Generate reward progression plot
             plot_q_learning_progress(
                 rewards=rewards,
                 filename="training_results",
-                save_dir=SimulationConfig.PLOT_DIR,
+                save_dir=DATA_DIR,
             )
 
             self.logger.info(
-                f"Training results plotted to {SimulationConfig.PLOT_DIR}\\training_results.png"
+                f"Training results plotted to {DATA_DIR}\\training_results.png"
             )
         except Exception as e:
             self.logger.error(f"Error plotting training results: {e}")
@@ -302,5 +328,4 @@ class Driver(Supervisor):
 
 # Main entry point
 if __name__ == "__main__":
-    controller = Driver()
-    controller.run()
+    Driver().run()

@@ -1,31 +1,20 @@
-"""
-Q-Learning Agent module for the Slave robot.
-
-This module encapsulates the reinforcement learning logic, separating it
-from the robot control code for better maintainability.
-"""
+"""Implement Q-learning agent with adaptive parameters and persistence."""
 
 import random
 import pickle
 import os
 from typing import Dict, List, Tuple, Optional
-from common.logger import get_logger
-from common.rl_utils import get_discrete_state
-from common.config import RLConfig
+from common.rl_utils import get_discrete_state, get_nearby_states
+from common.config import RLConfig, get_logger, Q_TABLE_PATH
 
-# Set up logger
+# Configure module-level logger
 logger = get_logger(__name__)
 
 
 class QLearningAgent:
-    """
-    Q-Learning agent class that manages the reinforcement learning process.
+    """Implement Q-learning logic and Q-table updates."""
 
-    This class encapsulates state discretization, action selection,
-    Q-table updates, and other reinforcement learning operations.
-    """
-
-    # Constants for action indices
+    # Action constants
     FORWARD = 0
     TURN_LEFT = 1
     TURN_RIGHT = 2
@@ -42,18 +31,7 @@ class QLearningAgent:
         max_speed: float = 10.0,
         angle_bins: int = 8,
     ):
-        """
-        Initialize the Q-learning agent with learning parameters.
-
-        Args:
-            learning_rate: Alpha parameter for Q-learning updates
-            min_learning_rate: Minimum learning rate after decay
-            discount_factor: Gamma parameter for future reward weighting
-            min_discount_factor: Minimum discount factor
-            exploration_rate: Epsilon for exploration-exploitation balance
-            max_speed: Maximum robot speed for action execution
-            angle_bins: Number of bins for discretizing angles
-        """
+        """Initialize agent settings and load existing Q-table."""
         self.learning_rate = learning_rate
         self.min_learning_rate = min_learning_rate
         self.discount_factor = discount_factor
@@ -62,18 +40,16 @@ class QLearningAgent:
         self.max_speed = max_speed
         self.angle_bins = angle_bins
 
-        # Initialize Q-table and learning statistics
         self.q_table: Dict[Tuple, List[float]] = {}
         self.total_updates = 0
 
-        # Track learning metrics
         self.td_errors: List[float] = []
         self.learning_rates: List[float] = []
         self.discount_factors: List[float] = []
+        self.rng = random.Random()
 
-        # Load existing Q-table if available
         try:
-            self.load_q_table(RLConfig.Q_TABLE_PATH)
+            self.load_q_table(Q_TABLE_PATH)
         except Exception as e:
             logger.warning(f"Could not load Q-table: {e}")
 
@@ -86,20 +62,7 @@ class QLearningAgent:
         right_sensor: float,
         wheel_velocities: List[float],
     ) -> Optional[Tuple]:
-        """
-        Generate a discrete state representation for Q-learning using the centralized rl_utils function.
-
-        Args:
-            position: Current [x, y] position
-            target_position: Target [x, y] position
-            orientation: Current robot orientation in radians
-            left_sensor: Left distance sensor reading
-            right_sensor: Right distance sensor reading
-            wheel_velocities: [left_wheel_velocity, right_wheel_velocity]
-
-        Returns:
-            A tuple representing the discrete state or None if inputs are invalid
-        """
+        """Convert raw observations into discrete state bins."""
         return get_discrete_state(
             position,
             target_position,
@@ -111,78 +74,10 @@ class QLearningAgent:
         )
 
     def choose_action(self, state: Tuple, current_distance: float = None) -> int:
-        """
-        Select an action using an enhanced epsilon-greedy strategy.
-        Only allow STOP if close to the target.
-
-        Args:
-            state: The current discrete state tuple
-            current_distance: Current distance to target (float)
-
-        Returns:
-            The chosen action index
-        """
-        # Initialize Q-values for this state if not already done
-        if state not in self.q_table:
-            self.q_table[state] = [0.0] * 5  # Initialize Q-values for all actions
-
-        # Determine allowed actions
-        allow_stop = (
-            current_distance is not None
-            and current_distance <= RLConfig.TARGET_THRESHOLD
-        )
-        action_indices = [0, 1, 2, 3]  # FORWARD, TURN_LEFT, TURN_RIGHT, BACKWARD
-        if allow_stop:
-            action_indices.append(4)  # STOP
-
-        # Exploration: choose a random action based on exploration rate
-        if random.random() < self.exploration_rate:
-            # Random action selection - bias toward forward movement to speed up exploration of the environment
-            if (
-                random.random() < 0.5 and 0 in action_indices
-            ):  # 50% chance to go forward
-                return 0  # FORWARD
-            return random.choice(action_indices)  # Otherwise random
-
-        # Exploitation: choose the action with the highest Q-value among allowed actions
-        q_values = self.q_table[state]
-        filtered_q = [(i, q_values[i]) for i in action_indices]
-        max_q_value = max(q for i, q in filtered_q)
-        best_actions = [i for i, q in filtered_q if q == max_q_value]
-        return random.choice(best_actions)
-
-    def choose_best_action(self, state: Tuple, current_distance: float = None) -> int:
-        """
-        Select the best action from the Q-table without exploration.
-        Only allow STOP if close to the target.
-
-        Args:
-            state: The current discrete state tuple
-            current_distance: Current distance to target (float)
-
-        Returns:
-            The action index with the highest Q-value
-        """
-        # If state is unknown, initialize it
+        """Perform epsilon-greedy action selection."""
         if state not in self.q_table:
             self.q_table[state] = [0.0] * 5
 
-            # Extract state components for basic heuristic
-            distance_bin, angle_bin, left_obstacle, right_obstacle, is_moving = state
-
-            # Simple fallback for unknown states
-            if left_obstacle and right_obstacle:
-                return self.BACKWARD
-            elif left_obstacle:
-                return self.TURN_RIGHT
-            elif right_obstacle:
-                return self.TURN_LEFT
-            elif angle_bin < self.angle_bins // 2:
-                return self.TURN_RIGHT
-            else:
-                return self.TURN_LEFT
-
-        # Determine allowed actions
         allow_stop = (
             current_distance is not None
             and current_distance <= RLConfig.TARGET_THRESHOLD
@@ -191,106 +86,202 @@ class QLearningAgent:
         if allow_stop:
             action_indices.append(4)
 
+        if self.rng.random() < self.exploration_rate:
+            if self.rng.random() < 0.5 and 0 in action_indices:
+                return 0
+            return self.rng.choice(action_indices)
+
         q_values = self.q_table[state]
         filtered_q = [(i, q_values[i]) for i in action_indices]
         max_q_value = max(q for i, q in filtered_q)
         best_actions = [i for i, q in filtered_q if q == max_q_value]
-        return random.choice(best_actions)
+        return self.rng.choice(best_actions)
+
+    def choose_best_action(self, state: Tuple, current_distance: float = None) -> int:
+        """Select the best action with heuristics and optional blending."""
+        if state not in self.q_table:
+            self.q_table[state] = [0.0] * 5
+
+            distance_bin, angle_bin, left_obstacle, right_obstacle, is_moving = state
+
+            # Make intelligent decisions for new states based on situation
+            if left_obstacle and right_obstacle:
+                return self.BACKWARD
+            elif left_obstacle:
+                return self.TURN_RIGHT
+            elif right_obstacle:
+                return self.TURN_LEFT
+            # Adjust precision based on distance to target
+            elif distance_bin < 2:  # Close to target
+                angle_offset = abs(angle_bin - self.angle_bins // 2)
+                if angle_offset <= 1:
+                    return self.FORWARD
+                elif angle_bin < self.angle_bins // 2:
+                    return self.TURN_RIGHT
+                else:
+                    return self.TURN_LEFT
+            elif distance_bin < 4:  # Medium distance
+                if angle_bin == self.angle_bins // 2:
+                    return self.FORWARD
+                elif angle_bin < self.angle_bins // 2:
+                    return self.TURN_RIGHT
+                else:
+                    return self.TURN_LEFT
+            else:  # Far away
+                angle_offset = abs(angle_bin - self.angle_bins // 2)
+                if angle_offset <= 2:  # Roughly aligned
+                    return self.FORWARD
+                elif angle_bin < self.angle_bins // 2:
+                    return self.TURN_RIGHT
+                else:
+                    return self.TURN_LEFT
+
+        allow_stop = (
+            current_distance is not None
+            and current_distance <= RLConfig.TARGET_THRESHOLD
+        )
+        action_indices = [0, 1, 2, 3]
+        if allow_stop:
+            action_indices.append(4)
+
+        # Apply state blending for smoother transitions
+        if RLConfig.ENABLE_STATE_BLENDING:
+            return self.blend_nearby_states_action(
+                state, current_distance, action_indices
+            )
+
+        # Original action selection if blending is disabled
+        q_values = self.q_table[state]
+        filtered_q = [(i, q_values[i]) for i in action_indices]
+        max_q_value = max(q for i, q in filtered_q)
+        best_actions = [i for i, q in filtered_q if q == max_q_value]
+        return self.rng.choice(best_actions)
+
+    def blend_nearby_states_action(self, state, current_distance, action_indices):
+        """Blend actions from neighboring states for smoother transitions."""
+        # Get nearby states (similar distance or angle)
+        nearby_states = get_nearby_states(state)
+
+        # Calculate base Q-values for current state
+        current_q_values = self.q_table[state]
+
+        # Initialize blended Q-values with the current state's values
+        blended_q_values = current_q_values.copy()
+
+        # Count valid nearby states
+        valid_nearby_count = 0
+
+        # Blend with neighboring states
+        for nearby_state in nearby_states:
+            if nearby_state in self.q_table:
+                valid_nearby_count += 1
+                nearby_q_values = self.q_table[nearby_state]
+
+                # Apply blending
+                for i in range(len(blended_q_values)):
+                    blended_q_values[i] += (
+                        nearby_q_values[i] * RLConfig.STATE_BLENDING_FACTOR
+                    )
+
+        # Normalize based on number of valid neighbors
+        if valid_nearby_count > 0:
+            normalization_factor = 1.0 + (
+                valid_nearby_count * RLConfig.STATE_BLENDING_FACTOR
+            )
+            blended_q_values = [q / normalization_factor for q in blended_q_values]
+
+        # Filter to allowed actions
+        filtered_q = [(i, blended_q_values[i]) for i in action_indices]
+        max_q_value = max(q for i, q in filtered_q)
+        best_actions = [i for i, q in filtered_q if q == max_q_value]
+
+        return self.rng.choice(best_actions)
 
     def update_q_table(
         self, state: Tuple, action: int, reward: float, next_state: Tuple
     ) -> None:
-        """
-        Update the Q-table using standard Q-learning with adaptive parameters.
-
-        Args:
-            state: Previous state
-            action: Action taken
-            reward: Reward received
-            next_state: Next state after action
-        """
+        """Apply TD update with adaptive learning and discount rates."""
         if state is None or next_state is None:
             return
 
-        # Initialize Q-values if states don't exist
         if state not in self.q_table:
-            self.q_table[state] = [0.0] * 5  # For 5 actions
+            self.q_table[state] = [0.0] * 5
         if next_state not in self.q_table:
-            self.q_table[next_state] = [0.0] * 5  # For 5 actions
+            self.q_table[next_state] = [0.0] * 5
 
-        # Track total updates
         self.total_updates += 1
 
-        # Use adaptive learning rate decay
+        # Compute adaptive learning rate influenced by state distance bin
+        distance_bin = state[0]
+        distance_factor = max(0.8, 2.0 - (distance_bin * 0.2))
+
         adaptive_learning_rate = max(
             self.min_learning_rate,
             self.learning_rate
+            * distance_factor
             * (
                 RLConfig.LEARNING_RATE_DECAY_BASE
                 ** (self.total_updates / RLConfig.LEARNING_RATE_DECAY_DENOM)
             ),
         )
 
-        # Simplified adaptive discount factor
+        # Compute adaptive discount factor based on proximity to goal
+        discount_distance_factor = min(1.0, 0.7 + (distance_bin * 0.05))
         adaptive_discount = max(
             self.min_discount_factor,
-            self.discount_factor * (0.9995 ** (self.total_updates / 5000)),
+            self.discount_factor
+            * discount_distance_factor
+            * (0.9995 ** (self.total_updates / 5000)),
         )
 
-        # Store the learning parameters for analysis
         self.learning_rates.append(adaptive_learning_rate)
         self.discount_factors.append(adaptive_discount)
 
-        # Standard Q-learning update formula
         current_q = self.q_table[state][action]
         next_max_q = max(self.q_table[next_state])
 
-        # Calculate the TD error
         td_error = reward + adaptive_discount * next_max_q - current_q
         self.td_errors.append(td_error)
 
-        # Update Q-value with bounds
         new_q = current_q + adaptive_learning_rate * td_error
         self.q_table[state][action] = max(-50.0, min(50.0, new_q))
 
-    def execute_action(self, action: int) -> List[float]:
-        """
-        Execute the given action and return the motor speeds.
+    def execute_action(self, action: int, state: Tuple = None) -> List[float]:
+        """Translate action index into motor speed commands."""
+        # Default speeds
+        forward_speed = self.max_speed
+        turn_speed = self.max_speed / 2
 
-        Args:
-            action: The action index
+        # Adjust speeds based on distance if state is available
+        if state is not None:
+            distance_bin = state[0]
 
-        Returns:
-            Motor speeds [left_speed, right_speed]
-        """
-        # Standard action execution
+            if distance_bin < 2:  # Very close to target
+                forward_speed = self.max_speed * 0.6  # More precise movements
+                turn_speed = self.max_speed * 0.4
+            elif distance_bin < 4:  # Medium distance
+                forward_speed = self.max_speed * 0.8
+                turn_speed = self.max_speed * 0.6
+            else:  # Far away
+                forward_speed = self.max_speed  # Full speed
+                turn_speed = self.max_speed * 0.7
+
         if action == self.FORWARD:
-            return [self.max_speed, self.max_speed]
+            return [forward_speed, forward_speed]
         elif action == self.TURN_LEFT:
-            return [self.max_speed / 2, -self.max_speed / 2]
+            return [turn_speed, -turn_speed]
         elif action == self.TURN_RIGHT:
-            return [-self.max_speed / 2, self.max_speed / 2]
+            return [-turn_speed, turn_speed]
         elif action == self.BACKWARD:
-            return [-self.max_speed, -self.max_speed]
+            return [-forward_speed * 0.7, -forward_speed * 0.7]
         elif action == self.STOP:
             return [0.0, 0.0]
         return [0.0, 0.0]
 
     def save_q_table(self, filepath: str) -> bool:
-        """
-        Save the Q-table to a file.
-
-        Args:
-            filepath: Path to save the Q-table
-
-        Returns:
-            True if successful, False otherwise
-        """
+        """Persist the Q-table to disk."""
         try:
-            # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
-
-            # Save the Q-table
             with open(filepath, "wb") as f:
                 pickle.dump(self.q_table, f)
 
@@ -301,15 +292,7 @@ class QLearningAgent:
             return False
 
     def load_q_table(self, filepath: str) -> bool:
-        """
-        Load the Q-table from a file.
-
-        Args:
-            filepath: Path to the Q-table file
-
-        Returns:
-            True if successful, False otherwise
-        """
+        """Load Q-table from disk or initialize empty table."""
         try:
             if os.path.exists(filepath):
                 with open(filepath, "rb") as f:
