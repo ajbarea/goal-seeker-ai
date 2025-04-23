@@ -23,7 +23,8 @@ class Driver(Supervisor):
 
         # Initialize logger and interface devices
         self.logger = get_logger(
-            __name__, level=getattr(logging, SimulationConfig.LOG_LEVEL_DRIVER, "INFO")
+            __file__,
+            level=getattr(logging, SimulationConfig.LOG_LEVEL_DRIVER, "INFO"),
         )
         self.emitter = self.getDevice("emitter")
         self.keyboard = self.getKeyboard()

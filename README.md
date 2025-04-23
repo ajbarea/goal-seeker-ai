@@ -1,4 +1,6 @@
-# Self Adaptive Systems with Reinforcement Learning
+# Goal Seeker AI - Self Adaptive Systems with Reinforcement Learning
+
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=ajbarea_goal-seeker-ai&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ajbarea_goal-seeker-ai)
 
 A robotics simulation project demonstrating self-adaptive behaviors through reinforcement learning techniques. This project uses Webots robotics simulator to implement Q-learning for autonomous robot navigation and obstacle avoidance.
 

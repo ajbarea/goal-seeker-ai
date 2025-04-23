@@ -22,7 +22,8 @@ from q_learning_agent import QLearningAgent
 
 # Configure module-level logger
 logger = get_logger(
-    __name__, level=getattr(logging, SimulationConfig.LOG_LEVEL_SLAVE, "INFO")
+    __file__,
+    level=getattr(logging, SimulationConfig.LOG_LEVEL_SLAVE, "INFO"),
 )
 
 

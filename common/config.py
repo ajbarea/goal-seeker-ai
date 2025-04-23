@@ -21,6 +21,9 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
     Returns:
         logging.Logger: Configured logger instance.
     """
+    # If a file path is passed as name, derive the logger name from its basename
+    if isinstance(name, str) and name.endswith(".py"):
+        name = os.path.splitext(os.path.basename(name))[0]
     logger = logging.getLogger(name)
     logger.setLevel(level)
 

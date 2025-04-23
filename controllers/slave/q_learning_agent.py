@@ -8,7 +8,7 @@ from common.rl_utils import get_discrete_state, get_nearby_states
 from common.config import RLConfig, get_logger, Q_TABLE_PATH
 
 # Configure module-level logger
-logger = get_logger(__name__)
+logger = get_logger("agent")
 
 
 class QLearningAgent:
