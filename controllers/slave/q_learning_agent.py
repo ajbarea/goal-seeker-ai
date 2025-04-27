@@ -5,7 +5,7 @@ import pickle
 import os
 from typing import Dict, List, Tuple, Optional
 from common.rl_utils import get_discrete_state, get_nearby_states
-from common.config import RLConfig, get_logger, Q_TABLE_PATH
+from common.config import RLConfig, get_logger
 
 # Configure module-level logger
 logger = get_logger("agent")
