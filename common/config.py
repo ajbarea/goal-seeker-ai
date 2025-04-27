@@ -116,6 +116,9 @@ class RLConfig:
     # Dynamic approach strategies
     PRECISION_APPROACH_DISTANCE = 0.8  # Distance to switch to precision approach
 
+    # --- Reward shaping ---
+    USE_POTENTIAL_SHAPING = True  # Set to True to enable potential-based reward shaping
+
 
 class RobotConfig:
     """Physical parameters and start/target positions for the robot."""

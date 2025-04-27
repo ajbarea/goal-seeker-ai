@@ -78,19 +78,24 @@ class QLearningController:
         self.episode_step = 0
 
     def calculate_reward(self, current_position):
-        """Compute reward based on distance progress and penalties."""
+        """Compute reward based on distance progress and potential-based shaping."""
+        # Use potential-based shaping if enabled
+        use_shaping = getattr(RLConfig, "USE_POTENTIAL_SHAPING", True)
+        discount = RLConfig.DISCOUNT_FACTOR
         reward = calculate_reward(
             current_position[:2],
             self.driver.target_position,
             self.previous_distance_to_target,
             RLConfig.TARGET_THRESHOLD,
+            previous_position=self.previous_position if hasattr(self, "previous_position") else None,
+            discount_factor=discount,
+            use_potential_shaping=use_shaping,
         )
-
         current_distance = calculate_distance(
             current_position[:2], self.driver.target_position
         )
         self.previous_distance_to_target = current_distance
-
+        self.previous_position = current_position[:2]
         return reward
 
     def manage_training_step(self, position):

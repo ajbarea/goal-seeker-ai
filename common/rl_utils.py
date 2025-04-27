@@ -88,6 +88,14 @@ def discretize_velocity(wheel_velocities: List[float]) -> int:
         return 0
 
 
+def calculate_potential(
+    position: List[float],
+    target_position: List[float],
+) -> float:
+    """Potential function for reward shaping: negative distance to goal."""
+    return -calculate_distance(position[:2], target_position)
+
+
 def calculate_reward(
     current_position: List[float],
     target_position: List[float],
@@ -95,24 +103,27 @@ def calculate_reward(
     target_threshold: float = 0.1,
     left_sensor: Optional[float] = None,
     right_sensor: Optional[float] = None,
+    previous_position: Optional[List[float]] = None,
+    discount_factor: Optional[float] = None,
+    use_potential_shaping: bool = False,
 ) -> float:
-    """Compute the reward based on distance progress, step penalty, and collision penalty."""
+    """Compute the reward with optional potential-based shaping."""
     current_distance = calculate_distance(current_position[:2], target_position)
 
     if current_distance < target_threshold:
         return RLConfig.TARGET_REACHED_REWARD
 
     if previous_distance is None:
-        return 0.0
-
-    # reward is proportional to distance improvement
-    distance_improvement = previous_distance - current_distance
-    if distance_improvement > 0:
-        reward = 10.0 * distance_improvement
+        base_reward = 0.0
     else:
-        reward = -8.0 * abs(distance_improvement)
-    # include per-step penalty
-    reward -= RLConfig.STEP_PENALTY
+        # reward is proportional to distance improvement
+        distance_improvement = previous_distance - current_distance
+        if distance_improvement > 0:
+            base_reward = 10.0 * distance_improvement
+        else:
+            base_reward = -8.0 * abs(distance_improvement)
+        # include per-step penalty
+        base_reward -= RLConfig.STEP_PENALTY
 
     # Apply collision penalty if sensors indicate obstacle contact
     if left_sensor is not None and right_sensor is not None:
@@ -122,9 +133,17 @@ def calculate_reward(
             left_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
             or right_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
         ):
-            reward -= RLConfig.COLLISION_PENALTY
+            base_reward -= RLConfig.COLLISION_PENALTY
 
-    return reward
+    # --- Potential-based reward shaping ---
+    if use_potential_shaping and previous_position is not None and discount_factor is not None:
+        phi_prev = calculate_potential(previous_position, target_position)
+        phi_curr = calculate_potential(current_position, target_position)
+        shaped_reward = base_reward + discount_factor * phi_curr - phi_prev
+        return shaped_reward
+    # --- End shaping ---
+
+    return base_reward
 
 
 def get_action_name(action: int) -> str:
