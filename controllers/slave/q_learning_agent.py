@@ -93,42 +93,10 @@ class QLearningAgent:
     def choose_best_action(self, state: Tuple, current_distance: float = None) -> int:
         """Select the best action with heuristics and optional blending."""
         if state not in self.q_table:
+            # Initialize unseen state with zero Q-values
             self.q_table[state] = [0.0] * 5
 
-            distance_bin, angle_bin, left_obstacle, right_obstacle, is_moving = state
-
-            # Make intelligent decisions for new states based on situation
-            if left_obstacle and right_obstacle:
-                return self.BACKWARD
-            elif left_obstacle:
-                return self.TURN_RIGHT
-            elif right_obstacle:
-                return self.TURN_LEFT
-            # Adjust precision based on distance to target
-            elif distance_bin < 2:  # Close to target
-                angle_offset = abs(angle_bin - self.angle_bins // 2)
-                if angle_offset <= 1:
-                    return self.FORWARD
-                elif angle_bin < self.angle_bins // 2:
-                    return self.TURN_RIGHT
-                else:
-                    return self.TURN_LEFT
-            elif distance_bin < 4:  # Medium distance
-                if angle_bin == self.angle_bins // 2:
-                    return self.FORWARD
-                elif angle_bin < self.angle_bins // 2:
-                    return self.TURN_RIGHT
-                else:
-                    return self.TURN_LEFT
-            else:  # Far away
-                angle_offset = abs(angle_bin - self.angle_bins // 2)
-                if angle_offset <= 2:  # Roughly aligned
-                    return self.FORWARD
-                elif angle_bin < self.angle_bins // 2:
-                    return self.TURN_RIGHT
-                else:
-                    return self.TURN_LEFT
-
+        # Continue with Q-value based decision
         allow_stop = (
             current_distance is not None
             and current_distance <= RLConfig.TARGET_THRESHOLD
@@ -203,6 +171,15 @@ class QLearningAgent:
             self.q_table[next_state] = [0.0] * 5
 
         self.total_updates += 1
+
+        # Apply collision penalty if state indicates obstacle contact
+        # state format: (distance_bin, angle_bin, left_obs, right_obs, velocity_state)
+        _, _, left_obs, right_obs, _ = state
+        if (
+            left_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
+            or right_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
+        ):
+            reward -= RLConfig.COLLISION_PENALTY
 
         # Compute adaptive learning rate influenced by state distance bin
         distance_bin = state[0]

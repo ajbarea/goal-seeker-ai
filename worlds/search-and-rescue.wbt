@@ -54,6 +54,8 @@ DEF ROBOT1 Robot {
   translation -0.140251 0.362306 0
   rotation 0 0 -1 0.221754
   children [
+    Compass {
+    }
     GPS {
     }
     DEF MAIN_BODY Pose {
@@ -275,6 +277,8 @@ DEF ROBOT2 Robot {
   translation -0.511288 -0.288898 0
   rotation 0 0 -1 2.67372
   children [
+    Compass {
+    }
     GPS {
     }
     DEF MAIN_BODY Pose {
@@ -496,6 +500,8 @@ DEF ROBOT3 Robot {
   translation 0 -0.15 0
   rotation 0 0 1 2.54759
   children [
+    Compass {
+    }
     GPS {
     }
     DEF MAIN_BODY Pose {
