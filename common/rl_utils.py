@@ -93,10 +93,10 @@ def calculate_reward(
     target_position: List[float],
     previous_distance: Optional[float] = None,
     target_threshold: float = 0.1,
-    orientation: Optional[float] = None,
-    wheel_velocities: Optional[List[float]] = None,
+    left_sensor: Optional[float] = None,
+    right_sensor: Optional[float] = None,
 ) -> float:
-    """Compute the reward based on distance progress, orientation, and motion penalties."""
+    """Compute the reward based on distance progress, step penalty, and collision penalty."""
     current_distance = calculate_distance(current_position[:2], target_position)
 
     if current_distance < target_threshold:
@@ -105,44 +105,26 @@ def calculate_reward(
     if previous_distance is None:
         return 0.0
 
+    # reward is proportional to distance improvement
     distance_improvement = previous_distance - current_distance
-    base_reward = (
-        10.0 * distance_improvement
-        if distance_improvement > 0
-        else -8.0 * abs(distance_improvement)
-    )
-    proximity_bonus = 1.0 / (current_distance + 0.5)
+    if distance_improvement > 0:
+        reward = 10.0 * distance_improvement
+    else:
+        reward = -8.0 * abs(distance_improvement)
+    # include per-step penalty
+    reward -= RLConfig.STEP_PENALTY
 
-    orientation_bonus = 0.0
-    if orientation is not None:
-        dx = target_position[0] - current_position[0]
-        dy = target_position[1] - current_position[1]
-        angle_to_target = math.atan2(dy, dx)
-        angle_diff = abs(normalize_angle(angle_to_target - orientation))
-        orientation_bonus = 0.5 * (1.0 - angle_diff / math.pi)
+    # Apply collision penalty if sensors indicate obstacle contact
+    if left_sensor is not None and right_sensor is not None:
+        left_obs = discretize_sensor(left_sensor)
+        right_obs = discretize_sensor(right_sensor)
+        if (
+            left_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
+            or right_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
+        ):
+            reward -= RLConfig.COLLISION_PENALTY
 
-    stop_penalty = 0.0
-    if wheel_velocities is not None and current_distance > target_threshold * 2:
-        if abs(wheel_velocities[0]) < 0.05 and abs(wheel_velocities[1]) < 0.05:
-            stop_penalty = -1.0
-
-    spin_penalty = 0.0
-    if wheel_velocities is not None:
-        if wheel_velocities[0] * wheel_velocities[1] < 0:
-            spin_penalty = -0.5
-
-    step_penalty = -RLConfig.STEP_PENALTY
-
-    total_reward = (
-        base_reward
-        + proximity_bonus
-        + orientation_bonus
-        + stop_penalty
-        + spin_penalty
-        + step_penalty
-    )
-
-    return total_reward
+    return reward
 
 
 def get_action_name(action: int) -> str:

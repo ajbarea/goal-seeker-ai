@@ -5,10 +5,10 @@ import pickle
 import os
 from typing import Dict, List, Tuple, Optional
 from common.rl_utils import get_discrete_state, get_nearby_states
-from common.config import RLConfig, get_logger, Q_TABLE_PATH
+from common.config import RLConfig, get_logger
 
 # Configure module-level logger
-logger = get_logger(__name__)
+logger = get_logger("agent")
 
 
 class QLearningAgent:
@@ -39,19 +39,12 @@ class QLearningAgent:
         self.exploration_rate = exploration_rate
         self.max_speed = max_speed
         self.angle_bins = angle_bins
-
         self.q_table: Dict[Tuple, List[float]] = {}
         self.total_updates = 0
-
         self.td_errors: List[float] = []
         self.learning_rates: List[float] = []
         self.discount_factors: List[float] = []
         self.rng = random.Random()
-
-        try:
-            self.load_q_table(Q_TABLE_PATH)
-        except Exception as e:
-            logger.warning(f"Could not load Q-table: {e}")
 
     def get_discrete_state(
         self,
@@ -100,42 +93,10 @@ class QLearningAgent:
     def choose_best_action(self, state: Tuple, current_distance: float = None) -> int:
         """Select the best action with heuristics and optional blending."""
         if state not in self.q_table:
+            # Initialize unseen state with zero Q-values
             self.q_table[state] = [0.0] * 5
 
-            distance_bin, angle_bin, left_obstacle, right_obstacle, is_moving = state
-
-            # Make intelligent decisions for new states based on situation
-            if left_obstacle and right_obstacle:
-                return self.BACKWARD
-            elif left_obstacle:
-                return self.TURN_RIGHT
-            elif right_obstacle:
-                return self.TURN_LEFT
-            # Adjust precision based on distance to target
-            elif distance_bin < 2:  # Close to target
-                angle_offset = abs(angle_bin - self.angle_bins // 2)
-                if angle_offset <= 1:
-                    return self.FORWARD
-                elif angle_bin < self.angle_bins // 2:
-                    return self.TURN_RIGHT
-                else:
-                    return self.TURN_LEFT
-            elif distance_bin < 4:  # Medium distance
-                if angle_bin == self.angle_bins // 2:
-                    return self.FORWARD
-                elif angle_bin < self.angle_bins // 2:
-                    return self.TURN_RIGHT
-                else:
-                    return self.TURN_LEFT
-            else:  # Far away
-                angle_offset = abs(angle_bin - self.angle_bins // 2)
-                if angle_offset <= 2:  # Roughly aligned
-                    return self.FORWARD
-                elif angle_bin < self.angle_bins // 2:
-                    return self.TURN_RIGHT
-                else:
-                    return self.TURN_LEFT
-
+        # Continue with Q-value based decision
         allow_stop = (
             current_distance is not None
             and current_distance <= RLConfig.TARGET_THRESHOLD
@@ -210,6 +171,15 @@ class QLearningAgent:
             self.q_table[next_state] = [0.0] * 5
 
         self.total_updates += 1
+
+        # Apply collision penalty if state indicates obstacle contact
+        # state format: (distance_bin, angle_bin, left_obs, right_obs, velocity_state)
+        _, _, left_obs, right_obs, _ = state
+        if (
+            left_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
+            or right_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
+        ):
+            reward -= RLConfig.COLLISION_PENALTY
 
         # Compute adaptive learning rate influenced by state distance bin
         distance_bin = state[0]

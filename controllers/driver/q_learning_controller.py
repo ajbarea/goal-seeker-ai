@@ -10,8 +10,7 @@ from common.config import (
     Q_TABLE_PATH,
     BEST_Q_TABLE_PATH,
 )
-from common.rl_utils import calculate_distance, calculate_reward, get_action_name
-import random
+from common.rl_utils import calculate_distance, calculate_reward
 
 
 class QLearningController:
@@ -44,10 +43,7 @@ class QLearningController:
         self.rewards_history = []
         self.episode_rewards = []
 
-        # Action persistence and state tracking
-        self.last_action = None
-        self.action_counter = 0
-        self.action_persistence = RLConfig.ACTION_PERSISTENCE_INITIAL
+        # State tracking for reward calculation
         self.previous_distance_to_target = None
 
         # Control state for goal-seeking phase
@@ -67,8 +63,6 @@ class QLearningController:
         self.driver.emitter.send("clear_q_table".encode("utf-8"))
 
         # Ensure robot is stopped before first episode
-        self.last_action = None
-        self.action_counter = 0
         self.driver.emitter.send("stop".encode("utf-8"))
         self.driver.step(RobotConfig.TIME_STEP)
 
@@ -108,55 +102,21 @@ class QLearningController:
 
         if self.previous_distance_to_target is not None:
             reward = self.calculate_reward(position)
-
+            # send reward to slave; policy and Q-table updates are handled in slave
             self.driver.emitter.send(f"reward:{reward}".encode("utf-8"))
             self.episode_rewards.append(reward)
 
-            if SimulationConfig.ENABLE_DETAILED_LOGGING and self.episode_step % 75 == 0:
-                self.logger.info(
-                    f"Training: Episode {self.episode_count}, Step {self.episode_step}, Distance {current_distance:.2f}, Reward:{reward:.2f}"
-                )
+        if SimulationConfig.ENABLE_DETAILED_LOGGING and self.episode_step % 75 == 0:
+            self.logger.info(
+                f"Training: Episode {self.episode_count}, Step {self.episode_step}, Distance {current_distance:.2f}, Reward:{reward:.2f}"
+            )
 
-        if self.action_counter <= 0 or current_distance < RLConfig.TARGET_THRESHOLD:
-            action = self.choose_action(current_distance)
-            self.execute_action(action)
-            self.last_action = action
-
-            if action in [1, 2]:
-                self.action_counter = max(1, self.action_persistence // 2)
-            elif current_distance < 0.3:
-                self.action_counter = max(1, self.action_persistence // 2)
-            else:
-                self.action_counter = self.action_persistence
-        else:
-            self.action_counter -= 1
-
+        # update previous distance for next reward computation
         self.previous_distance_to_target = current_distance
 
+        # check for episode termination
         if self.check_episode_complete(current_distance):
             self.complete_episode()
-
-    def choose_action(self, current_distance):
-        """Select an action using an epsilon-greedy policy."""
-        allow_stop = current_distance < RLConfig.TARGET_THRESHOLD
-        action_indices = [0, 1, 2, 3]
-        if allow_stop:
-            action_indices.append(4)
-        if random.random() < self.exploration_rate:
-            return random.choice(action_indices)
-        else:
-            if allow_stop:
-                return 4
-            else:
-                return 0
-
-    def execute_action(self, action):
-        """Send selected action command to the slave controller."""
-        action_msg = f"{RLConfig.ACTION_COMMAND_PREFIX}{action}"
-        self.driver.emitter.send(action_msg.encode("utf-8"))
-
-        if SimulationConfig.ENABLE_DETAILED_LOGGING and self.episode_step % 10 == 0:
-            self.logger.debug(f"Executing action: {get_action_name(action)}")
 
     def start_new_episode(self):
         """Configure state for a new training episode."""
@@ -181,21 +141,10 @@ class QLearningController:
             start_position[:2], target_position
         )
 
-        self.last_action = None
-        self.action_counter = 0
-
         self.logger.info(f"Starting episode {self.episode_count}/{self.max_episodes}")
 
         target_msg = f"learn:{target_position[0]},{target_position[1]}"
         self.driver.emitter.send(target_msg.encode("utf-8"))
-
-        self.action_persistence = max(
-            RLConfig.ACTION_PERSISTENCE_MIN,
-            int(
-                RLConfig.ACTION_PERSISTENCE_INITIAL
-                * (RLConfig.ACTION_PERSISTENCE_DECAY**self.episode_count)
-            ),
-        )
 
     def check_episode_complete(self, current_distance):
         """Check whether the current episode should terminate."""

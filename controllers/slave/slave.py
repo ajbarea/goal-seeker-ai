@@ -22,7 +22,8 @@ from q_learning_agent import QLearningAgent
 
 # Configure module-level logger
 logger = get_logger(
-    __name__, level=getattr(logging, SimulationConfig.LOG_LEVEL_SLAVE, "INFO")
+    __file__,
+    level=getattr(logging, SimulationConfig.LOG_LEVEL_SLAVE, "INFO"),
 )
 
 
@@ -88,15 +89,11 @@ class Slave(Robot):
             self.distanceSensors.append(self.getDevice("ds" + str(dsnumber)))
             self.distanceSensors[-1].enable(self.timeStep)
 
-        self.gps = None
-        try:
-            gps_device = self.getDevice("gps")
-            self.gps = gps_device
-            self.gps.enable(self.timeStep)
-        except Exception:
-            logger.info("Fallback to supervisor position updates when GPS unavailable")
-            self.gps = None
+        # Initialize compass sensor for robot heading
+        self.compass = self.getDevice("compass")
+        self.compass.enable(self.timeStep)
 
+        # Position updates received from driver via emitter; remove GPS fallback
         self.position = [0, 0]
         self.orientation = 0.0
 
@@ -134,6 +131,11 @@ class Slave(Robot):
     def run(self):
         """Process messages and update control modes each timestep."""
         while True:
+            # update robot heading from compass
+            compass_vals = self.compass.getValues()
+            # compute yaw relative to north (x, z components)
+            self.orientation = math.atan2(compass_vals[0], compass_vals[2])
+
             if self.receiver.getQueueLength() > 0:
                 message = self.receiver.getString()
                 self.receiver.nextPacket()
@@ -517,16 +519,8 @@ class Slave(Robot):
 
             elif self.mode == self.Mode.LEARN:
                 position = None
-                if self.gps:
-                    try:
-                        position = self.gps.getValues()
-                        if position and len(position) >= 2:
-                            position = position[:2]
-                    except Exception:
-                        position = None
 
-                if position is None:
-                    position = self.position
+                position = self.position
 
                 if position:
                     self.position = position

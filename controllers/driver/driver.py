@@ -2,7 +2,9 @@
 
 from controller import Supervisor  # type: ignore
 import logging
+import math
 import os
+import random
 from common.rl_utils import calculate_distance, plot_q_learning_progress
 from common.config import (
     SimulationConfig,
@@ -23,7 +25,8 @@ class Driver(Supervisor):
 
         # Initialize logger and interface devices
         self.logger = get_logger(
-            __name__, level=getattr(logging, SimulationConfig.LOG_LEVEL_DRIVER, "INFO")
+            __file__,
+            level=getattr(logging, SimulationConfig.LOG_LEVEL_DRIVER, "INFO"),
         )
         self.emitter = self.getDevice("emitter")
         self.keyboard = self.getKeyboard()
@@ -46,6 +49,9 @@ class Driver(Supervisor):
         # Log initialization status
         self.logger.info("Driver initialization complete")
         self.logger.info("Press 'I' for help")
+
+        # Initialize instance RNG
+        self.rng = random.Random()
 
     def run(self):
         """Run the simulation loop to handle RL training, goal seeking, and manual inputs."""
@@ -234,10 +240,8 @@ class Driver(Supervisor):
     def reset_robot_position(self, position):
         """Reset robot to specified position with random offset and reset physics."""
         # Add small random offset for variability
-        import random
-
-        random_offset_x = random.uniform(-0.03, 0.03)
-        random_offset_y = random.uniform(-0.03, 0.03)
+        random_offset_x = self.rng.uniform(-0.03, 0.03)
+        random_offset_y = self.rng.uniform(-0.03, 0.03)
         randomized_position = [
             position[0] + random_offset_x,
             position[1] + random_offset_y,
@@ -250,10 +254,11 @@ class Driver(Supervisor):
             for _ in range(3):  # Multiple steps to ensure stop is processed
                 self.step(self.TIME_STEP)
 
-        # Reset orientation to upright
+        # Reset orientation with random yaw
         rotation_field = self.robot.getField("rotation")
         if rotation_field:
-            rotation_field.setSFRotation([0, 1, 0, 0])
+            angle = self.rng.uniform(-math.pi, math.pi)
+            rotation_field.setSFRotation([0, 0, 1, angle])
 
         # Reset position and physics
         self.translation_field.setSFVec3f(randomized_position)

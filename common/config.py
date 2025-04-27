@@ -21,6 +21,9 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
     Returns:
         logging.Logger: Configured logger instance.
     """
+    # If a file path is passed as name, derive the logger name from its basename
+    if isinstance(name, str) and name.endswith(".py"):
+        name = os.path.splitext(os.path.basename(name))[0]
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
@@ -66,19 +69,19 @@ class RLConfig:
     """Reinforcement learning hyperparameters and limits."""
 
     # Core RL hyperparameters
-    LEARNING_RATE = 0.1
+    LEARNING_RATE = 0.2
     MIN_LEARNING_RATE = 0.03
-    DISCOUNT_FACTOR = 0.95
+    DISCOUNT_FACTOR = 0.98
     MIN_DISCOUNT_FACTOR = 0.7
-    EXPLORATION_RATE = 0.4
+    EXPLORATION_RATE = 0.3
     MIN_EXPLORATION_RATE = 0.05
-    EXPLORATION_DECAY = 0.985
+    EXPLORATION_DECAY = 0.99
     LEARNING_RATE_DECAY_BASE = 0.9995
     LEARNING_RATE_DECAY_DENOM = 20000
 
     # Episode limits
-    MAX_EPISODES = 100
-    MAX_STEPS_PER_EPISODE = 600
+    MAX_EPISODES = 300
+    MAX_STEPS_PER_EPISODE = 1000
 
     # Action persistence parameters
     ACTION_PERSISTENCE_INITIAL = 3
@@ -87,10 +90,14 @@ class RLConfig:
 
     # Target and reward configuration
     TARGET_THRESHOLD = 0.15
-    TARGET_REACHED_REWARD = 20.0  # Reward for reaching the target
+    TARGET_REACHED_REWARD = 50.0  # Reward for reaching the target
 
     # Negative reward applied each step
-    STEP_PENALTY = 0.2
+    STEP_PENALTY = 0.1
+
+    # Collision penalty parameters
+    COLLISION_PENALTY = 5.0  # penalty for hitting obstacles
+    COLLISION_SENSOR_THRESHOLD = 3  # discrete sensor state indicating collision
 
     # Protocol prefix for action commands to the slave controller
     ACTION_COMMAND_PREFIX = "exec_action:"
