@@ -1,14 +1,9 @@
 """Manage Q-learning training sessions and goal seeking control flow."""
 
-import os
-import shutil
 from common.config import (
     RLConfig,
     RobotConfig,
     SimulationConfig,
-    DATA_DIR,
-    Q_TABLE_PATH,
-    BEST_Q_TABLE_PATH,
 )
 from common.rl_utils import calculate_distance, calculate_reward
 
@@ -222,33 +217,14 @@ class QLearningController:
         self.training_active = False
         self.logger.info("Training complete")
 
-        success_rate = (self.successful_reaches / self.total_episodes_completed) * 100
-        self.logger.info(
-            f"Final success rate: {success_rate:.1f}% ({self.successful_reaches}/{self.total_episodes_completed})"
-        )
-
-        # Persist last run Q‑table
-        self.save_q_table()
-
-        # Compare performance and update best
-        os.makedirs(DATA_DIR, exist_ok=True)
-        perf_file = os.path.join(DATA_DIR, "best_reward.txt")
-        current_perf = sum(self.rewards_history)
+        # Request Slave to persist current and best Q-tables
         try:
-            best_perf = float(open(perf_file).read())
-        except Exception:
-            best_perf = float("-inf")
-        if current_perf > best_perf:
-            # Ensure BEST_Q_TABLE_PATH directory exists before copy
-            os.makedirs(os.path.dirname(BEST_Q_TABLE_PATH), exist_ok=True)
-            shutil.copy(Q_TABLE_PATH, BEST_Q_TABLE_PATH)
-            with open(perf_file, "w") as f:
-                f.write(str(current_perf))
-            self.logger.info(f"New best Q‑table (reward={current_perf:.1f}) saved")
-        else:
-            self.logger.info(
-                f"Best Q‑table retained (best={best_perf:.1f} vs current={current_perf:.1f})"
-            )
+            self.driver.emitter.send("save_q_table".encode("utf-8"))
+            self.logger.info("Requested Slave to save current Q-table")
+            self.driver.emitter.send("save_best_q_table".encode("utf-8"))
+            self.logger.info("Requested Slave to save best Q-table")
+        except Exception as e:
+            self.logger.error(f"Error requesting Q-table persistence: {e}")
 
         # Show training plot
         self.driver.plot_training_results(self.rewards_history)

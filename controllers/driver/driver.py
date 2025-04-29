@@ -74,12 +74,22 @@ class Driver(Supervisor):
                 self.rl_controller.manage_training_step(position)
 
             # Handle active goal seeking behavior
-            elif (
-                hasattr(self.rl_controller, "goal_seeking_active")
-                and self.rl_controller.goal_seeking_active
-            ):
+            elif getattr(self.rl_controller, "goal_seeking_active", False):
                 position = self.translation_field.getSFVec3f()
-                self.monitor_goal_seeking(position)
+                if self.step_counter % SimulationConfig.POSITION_UPDATE_FREQ == 0:
+                    dist = calculate_distance(position[:2], self.target_position)
+                    elapsed = (
+                        self.getTime() - self.rl_controller.goal_seeking_start_time
+                    )
+                    self.logger.info(
+                        f"Goal seeking in progress - Distance: {dist:.2f}, Time elapsed: {elapsed:.1f}s"
+                    )
+                    if dist < RLConfig.TARGET_THRESHOLD:
+                        self.logger.info(
+                            f"🎯 Successfully reached target in SEEK_GOAL mode after {elapsed:.1f}s"
+                        )
+                        self.emitter.send("stop".encode("utf-8"))
+                        self.rl_controller.goal_seeking_active = False
 
             # Process manual keyboard commands
             k = self.keyboard.getKey()
@@ -161,46 +171,6 @@ class Driver(Supervisor):
         current_time = self.getTime()
         elapsed_time = current_time - self.rl_controller.goal_seeking_start_time
 
-        # Periodically log goal seeking progress
-        if self.step_counter % 100 == 0:
-            # Avoid logging when very close to the target
-            if current_distance < RLConfig.TARGET_THRESHOLD * 1.2:
-                return
-
-            self.logger.info(
-                f"Goal seeking in progress - Distance: {current_distance:.2f}, "
-                f"Time elapsed: {elapsed_time:.1f}s"
-            )
-
-            # Detect if robot is stuck based on minimal progress
-            if hasattr(self, "last_goal_seeking_distance"):
-                if abs(current_distance - self.last_goal_seeking_distance) < 0.05:
-                    self.stuck_counter = getattr(self, "stuck_counter", 0) + 1
-                    if (
-                        self.stuck_counter >= SimulationConfig.STUCK_THRESHOLD
-                    ):  # Stuck for threshold number of checks
-                        self.logger.info(
-                            f"🤔 Robot stuck at distance {current_distance:.2f}. Attempting recovery..."
-                        )
-                        # Attempt repositioning; randomize movements on repeated failures
-                        if self.stuck_counter in (
-                            SimulationConfig.STUCK_THRESHOLD,
-                            SimulationConfig.STUCK_THRESHOLD + 2,
-                        ):
-                            self.emitter.send("reposition".encode("utf-8"))
-                            self.stuck_counter += 1
-                        else:
-                            self.logger.info(
-                                f"🔄 Reposition failed; issue random movement command at distance {current_distance:.2f}."
-                            )
-                            self.emitter.send("randomize".encode("utf-8"))
-                            self.stuck_counter = 0
-                else:
-                    self.stuck_counter = 0
-
-            # Update recorded distance for next check
-            self.last_goal_seeking_distance = current_distance
-
         # Enforce maximum goal seeking duration
         if elapsed_time > SimulationConfig.GOAL_SEEKING_TIMEOUT:
             self.logger.info(
@@ -236,9 +206,7 @@ class Driver(Supervisor):
         self.emitter.send("avoid obstacles".encode("utf-8"))
         self.step(self.TIME_STEP)
 
-        self.logger.info(
-            "Robot reset to default position and set to avoid obstacles mode"
-        )
+        self.logger.info("Command: Reset robot position")
 
     def reset_robot_position(self, position):
         """Reset robot to specified position with random offset and reset physics.

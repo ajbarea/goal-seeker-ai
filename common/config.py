@@ -6,7 +6,6 @@ from datetime import datetime
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data"))
 Q_TABLE_PATH = os.path.join(DATA_DIR, "q_table.pkl")
-BEST_Q_TABLE_PATH = os.path.join(DATA_DIR, "best_q_table.pkl")
 
 
 def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
@@ -76,15 +75,19 @@ class RLConfig:
     """Reinforcement learning hyperparameters and limits."""
 
     # Core RL hyperparameters
-    LEARNING_RATE = 0.2
-    MIN_LEARNING_RATE = 0.03
-    DISCOUNT_FACTOR = 0.98
-    MIN_DISCOUNT_FACTOR = 0.7
-    EXPLORATION_RATE = 0.3
-    MIN_EXPLORATION_RATE = 0.05
-    EXPLORATION_DECAY = 0.99
-    LEARNING_RATE_DECAY_BASE = 0.9995
-    LEARNING_RATE_DECAY_DENOM = 20000
+    LEARNING_RATE = 0.1
+    MIN_LEARNING_RATE = 0.01
+    DISCOUNT_FACTOR = 0.99
+    MIN_DISCOUNT_FACTOR = 0.9
+
+    # Exploration parameters
+    EXPLORATION_RATE = 1.0
+    MIN_EXPLORATION_RATE = 0.01
+    EXPLORATION_DECAY = 0.995
+
+    # Learning rate parameters
+    LEARNING_RATE_DECAY_BASE = 0.999
+    LEARNING_RATE_DECAY_DENOM = 10000
 
     # Episode limits
     MAX_EPISODES = 300
@@ -103,25 +106,11 @@ class RLConfig:
     STEP_PENALTY = 0.1
 
     # Collision penalty parameters
-    COLLISION_PENALTY = 2.5  # Penalty for hitting obstacles
+    COLLISION_PENALTY = 1  # Penalty for hitting obstacles
     COLLISION_SENSOR_THRESHOLD = 3  # Discrete sensor state indicating collision
 
     # Protocol prefix for action commands to the slave controller
     ACTION_COMMAND_PREFIX = "exec_action:"
-
-    # Stuck detection and recovery
-    POSITION_MEMORY_SIZE = 20  # Number of previous positions to remember
-    POSITION_MEMORY_THRESHOLD = 0.05  # Distance threshold to consider positions similar
-    STUCK_POSITION_PENALTY = (
-        -2.0
-    )  # Penalty for revisiting positions where robot got stuck
-
-    # State blending
-    ENABLE_STATE_BLENDING = True
-    STATE_BLENDING_FACTOR = 0.3  # Weight given to nearby states
-
-    # Dynamic approach strategies
-    PRECISION_APPROACH_DISTANCE = 0.8  # Distance to switch to precision approach
 
 
 class RobotConfig:
@@ -148,7 +137,7 @@ class SimulationConfig:
     LOG_TO_FILE = True
 
     # Frequency for position updates
-    POSITION_UPDATE_FREQ = 5
+    POSITION_UPDATE_FREQ = 50
 
     # Detailed messaging configuration
     ENABLE_DETAILED_LOGGING = True

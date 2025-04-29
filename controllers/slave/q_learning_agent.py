@@ -4,7 +4,7 @@ import random
 import pickle
 import os
 from typing import Dict, List, Tuple, Optional
-from common.rl_utils import get_discrete_state, get_nearby_states
+from common.rl_utils import get_discrete_state
 from common.config import RLConfig, get_logger
 
 # Configure module-level logger
@@ -121,20 +121,11 @@ class QLearningAgent:
         return self.rng.choice(best_actions)
 
     def choose_best_action(self, state: Tuple, current_distance: float = None) -> int:
-        """Select the best action using Q-values and optional blending.
-
-        Args:
-            state (Tuple): Current discrete state.
-            current_distance (float, optional): Distance to target.
-
-        Returns:
-            int: Best action index.
-        """
+        """Select the best action using Q-values."""
         if state not in self.q_table:
             # Initialize unseen state with zero Q-values
             self.q_table[state] = [0.0] * 5
 
-        # Continue with Q-value based decision
         allow_stop = (
             current_distance is not None
             and current_distance <= RLConfig.TARGET_THRESHOLD
@@ -143,66 +134,11 @@ class QLearningAgent:
         if allow_stop:
             action_indices.append(4)
 
-        # Apply state blending for smoother transitions
-        if RLConfig.ENABLE_STATE_BLENDING:
-            return self.blend_nearby_states_action(
-                state, current_distance, action_indices
-            )
-
-        # Original action selection if blending is disabled
+        # Q‑value based decision (no blending)
         q_values = self.q_table[state]
         filtered_q = [(i, q_values[i]) for i in action_indices]
-        max_q_value = max(q for i, q in filtered_q)
+        max_q_value = max(q for _, q in filtered_q)
         best_actions = [i for i, q in filtered_q if q == max_q_value]
-        return self.rng.choice(best_actions)
-
-    def blend_nearby_states_action(self, state, current_distance, action_indices):
-        """Blend Q-values from neighboring states for smoother transitions.
-
-        Args:
-            state (Tuple): Current discrete state.
-            current_distance (float): Distance to target.
-            action_indices (List[int]): Allowed action indices.
-
-        Returns:
-            int: Blended action index.
-        """
-        # Get nearby states (similar distance or angle)
-        nearby_states = get_nearby_states(state)
-
-        # Calculate base Q-values for current state
-        current_q_values = self.q_table[state]
-
-        # Initialize blended Q-values with the current state's values
-        blended_q_values = current_q_values.copy()
-
-        # Count valid nearby states
-        valid_nearby_count = 0
-
-        # Blend with neighboring states
-        for nearby_state in nearby_states:
-            if nearby_state in self.q_table:
-                valid_nearby_count += 1
-                nearby_q_values = self.q_table[nearby_state]
-
-                # Apply blending
-                for i in range(len(blended_q_values)):
-                    blended_q_values[i] += (
-                        nearby_q_values[i] * RLConfig.STATE_BLENDING_FACTOR
-                    )
-
-        # Normalize based on number of valid neighbors
-        if valid_nearby_count > 0:
-            normalization_factor = 1.0 + (
-                valid_nearby_count * RLConfig.STATE_BLENDING_FACTOR
-            )
-            blended_q_values = [q / normalization_factor for q in blended_q_values]
-
-        # Filter to allowed actions
-        filtered_q = [(i, blended_q_values[i]) for i in action_indices]
-        max_q_value = max(q for i, q in filtered_q)
-        best_actions = [i for i, q in filtered_q if q == max_q_value]
-
         return self.rng.choice(best_actions)
 
     def update_q_table(
