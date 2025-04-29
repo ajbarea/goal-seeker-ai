@@ -31,11 +31,11 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
     if logger.handlers:
         logger.handlers.clear()
 
-    # Configure console handler
+    # Initialize console handler for output
     console_handler = logging.StreamHandler()
     console_handler.setLevel(level)
 
-    # Define log message format for log records
+    # Set message format for log records
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -43,12 +43,8 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Configure file logging if enabled
     if log_to_file:
-        # Ensure log directory exists for file logging
         os.makedirs(log_dir, exist_ok=True)
-
-        # Construct timestamped log filename for log file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = os.path.join(log_dir, f"{name.split('.')[-1]}_{timestamp}.log")
 
@@ -61,7 +57,18 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
 
 
 def get_logger(name, level=logging.INFO, log_to_file=False):
-    """Shortcut to create a logger with optional file output."""
+    """Get a configured logger instance.
+
+    Get a logger by name with optional file output.
+
+    Args:
+        name (str): Logger identifier.
+        level (int): Minimum logging level.
+        log_to_file (bool): If True, write logs to a file.
+
+    Returns:
+        logging.Logger: Configured logger instance.
+    """
     return setup_logger(name, level, log_to_file)
 
 
@@ -90,14 +97,14 @@ class RLConfig:
 
     # Target and reward configuration
     TARGET_THRESHOLD = 0.15
-    TARGET_REACHED_REWARD = 50.0  # Reward for reaching the target
+    TARGET_REACHED_REWARD = 75  # Reward for reaching the target
 
     # Negative reward applied each step
     STEP_PENALTY = 0.1
 
     # Collision penalty parameters
-    COLLISION_PENALTY = 5.0  # penalty for hitting obstacles
-    COLLISION_SENSOR_THRESHOLD = 3  # discrete sensor state indicating collision
+    COLLISION_PENALTY = 2.5  # Penalty for hitting obstacles
+    COLLISION_SENSOR_THRESHOLD = 3  # Discrete sensor state indicating collision
 
     # Protocol prefix for action commands to the slave controller
     ACTION_COMMAND_PREFIX = "exec_action:"

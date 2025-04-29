@@ -15,7 +15,12 @@ from common.rl_utils import calculate_distance, calculate_reward
 
 class QLearningController:
     def __init__(self, driver, logger):
-        """Initialize Q-learning parameters and controller state."""
+        """Initialize Q-learning controller with parameters and state.
+
+        Args:
+            driver: Driver instance for robot control.
+            logger: Logger instance for logging events.
+        """
         self.driver = driver
         self.logger = logger
 
@@ -52,7 +57,7 @@ class QLearningController:
         self.goal_reached = False
 
     def start_learning(self):
-        """Begin reinforcement learning training."""
+        """Start reinforcement learning training session."""
         self.logger.info("Starting reinforcement learning")
         self.training_active = True
         self.episode_count = 0
@@ -69,7 +74,7 @@ class QLearningController:
         self.start_new_episode()
 
     def reset_statistics(self):
-        """Reset training session statistics."""
+        """Clear statistics for a new training session."""
         self.logger.info("Resetting learning statistics")
         self.episode_rewards = []
         self.rewards_history = []
@@ -78,7 +83,14 @@ class QLearningController:
         self.episode_step = 0
 
     def calculate_reward(self, current_position):
-        """Compute reward based on distance progress and penalties."""
+        """Calculate reward using distance progress and penalties.
+
+        Args:
+            current_position (List[float]): Current [x, y] position of the robot.
+
+        Returns:
+            float: Calculated reward value.
+        """
         reward = calculate_reward(
             current_position[:2],
             self.driver.target_position,
@@ -94,7 +106,10 @@ class QLearningController:
         return reward
 
     def manage_training_step(self, position):
-        """Process a single training timestep."""
+        """Handle one step of the training process.
+
+        Args:
+            position (List[float]): Current [x, y, z] position of the robot."""
         if not self.training_active:
             return
 
@@ -119,7 +134,7 @@ class QLearningController:
             self.complete_episode()
 
     def start_new_episode(self):
-        """Configure state for a new training episode."""
+        """Set up a new episode for training."""
         self.episode_count += 1
         self.episode_step = 0
         self.episode_rewards = []
@@ -147,7 +162,14 @@ class QLearningController:
         self.driver.emitter.send(target_msg.encode("utf-8"))
 
     def check_episode_complete(self, current_distance):
-        """Check whether the current episode should terminate."""
+        """Determine if the current episode has ended.
+
+        Args:
+            current_distance (float): Distance to the target.
+
+        Returns:
+            bool: True if the episode is complete, False otherwise.
+        """
         self.episode_step += 1
 
         if current_distance < RLConfig.TARGET_THRESHOLD:
@@ -162,7 +184,7 @@ class QLearningController:
         return False
 
     def complete_episode(self):
-        """Handle end-of-episode reporting and prepare the next episode."""
+        """Finalize the current episode and prepare for the next."""
         self.total_episodes_completed += 1
 
         total_reward = sum(self.episode_rewards)
@@ -196,7 +218,7 @@ class QLearningController:
         self.start_new_episode()
 
     def end_training(self):
-        """Finalize training, save data, and transition to goal seeking mode."""
+        """Conclude training, save results, and switch to goal seeking."""
         self.training_active = False
         self.logger.info("Training complete")
 
@@ -236,7 +258,7 @@ class QLearningController:
         self.start_goal_seeking()
 
     def start_goal_seeking(self):
-        """Initiate goal seeking behavior with the learned Q-policy."""
+        """Begin goal seeking using the trained Q-policy."""
         target_position = self.target_positions[self.current_target_index]
 
         start_position = self.start_positions[self.current_start_index]
@@ -266,7 +288,7 @@ class QLearningController:
         self.goal_reached = False
 
     def save_q_table(self):
-        """Instruct slave to save the Q-table to storage."""
+        """Request the slave to persist the Q-table to disk."""
         try:
             self.driver.emitter.send("save_q_table".encode("utf-8"))
             self.logger.info("Requested slave to save Q-table")
@@ -274,7 +296,7 @@ class QLearningController:
             self.logger.error(f"Error requesting Q-table save: {e}")
 
     def load_q_table(self):
-        """Instruct slave to load the existing Q-table."""
+        """Request the slave to load the Q-table from storage."""
         try:
             self.driver.emitter.send("load_q_table".encode("utf-8"))
             self.logger.info("Requested slave to load Q-table")

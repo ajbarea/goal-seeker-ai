@@ -31,7 +31,17 @@ class QLearningAgent:
         max_speed: float = 10.0,
         angle_bins: int = 8,
     ):
-        """Initialize agent settings and load existing Q-table."""
+        """Initialize Q-learning agent with parameters and Q-table.
+
+        Args:
+            learning_rate (float): Initial learning rate for Q-value updates.
+            min_learning_rate (float): Minimum learning rate.
+            discount_factor (float): Discount factor for future rewards.
+            min_discount_factor (float): Minimum discount factor.
+            exploration_rate (float): Probability of random action selection.
+            max_speed (float): Maximum robot speed.
+            angle_bins (int): Number of bins for angle discretization.
+        """
         self.learning_rate = learning_rate
         self.min_learning_rate = min_learning_rate
         self.discount_factor = discount_factor
@@ -55,7 +65,19 @@ class QLearningAgent:
         right_sensor: float,
         wheel_velocities: List[float],
     ) -> Optional[Tuple]:
-        """Convert raw observations into discrete state bins."""
+        """Discretize raw observations into state bins.
+
+        Args:
+            position (List[float]): Current [x, y] position.
+            target_position (List[float]): Target [x, y] position.
+            orientation (float): Robot orientation in radians.
+            left_sensor (float): Left sensor reading.
+            right_sensor (float): Right sensor reading.
+            wheel_velocities (List[float]): Wheel velocities [left, right].
+
+        Returns:
+            Optional[Tuple]: Discrete state tuple or None if invalid input.
+        """
         return get_discrete_state(
             position,
             target_position,
@@ -67,7 +89,15 @@ class QLearningAgent:
         )
 
     def choose_action(self, state: Tuple, current_distance: float = None) -> int:
-        """Perform epsilon-greedy action selection."""
+        """Select an action using epsilon-greedy policy.
+
+        Args:
+            state (Tuple): Current discrete state.
+            current_distance (float, optional): Distance to target.
+
+        Returns:
+            int: Selected action index.
+        """
         if state not in self.q_table:
             self.q_table[state] = [0.0] * 5
 
@@ -91,7 +121,15 @@ class QLearningAgent:
         return self.rng.choice(best_actions)
 
     def choose_best_action(self, state: Tuple, current_distance: float = None) -> int:
-        """Select the best action with heuristics and optional blending."""
+        """Select the best action using Q-values and optional blending.
+
+        Args:
+            state (Tuple): Current discrete state.
+            current_distance (float, optional): Distance to target.
+
+        Returns:
+            int: Best action index.
+        """
         if state not in self.q_table:
             # Initialize unseen state with zero Q-values
             self.q_table[state] = [0.0] * 5
@@ -119,7 +157,16 @@ class QLearningAgent:
         return self.rng.choice(best_actions)
 
     def blend_nearby_states_action(self, state, current_distance, action_indices):
-        """Blend actions from neighboring states for smoother transitions."""
+        """Blend Q-values from neighboring states for smoother transitions.
+
+        Args:
+            state (Tuple): Current discrete state.
+            current_distance (float): Distance to target.
+            action_indices (List[int]): Allowed action indices.
+
+        Returns:
+            int: Blended action index.
+        """
         # Get nearby states (similar distance or angle)
         nearby_states = get_nearby_states(state)
 
@@ -161,7 +208,13 @@ class QLearningAgent:
     def update_q_table(
         self, state: Tuple, action: int, reward: float, next_state: Tuple
     ) -> None:
-        """Apply TD update with adaptive learning and discount rates."""
+        """Update Q-table using temporal difference (TD) learning.
+
+        Args:
+            state (Tuple): Current discrete state.
+            action (int): Action taken.
+            reward (float): Reward received.
+            next_state (Tuple): Next discrete state."""
         if state is None or next_state is None:
             return
 
@@ -217,7 +270,14 @@ class QLearningAgent:
         self.q_table[state][action] = max(-50.0, min(50.0, new_q))
 
     def execute_action(self, action: int, state: Tuple = None) -> List[float]:
-        """Translate action index into motor speed commands."""
+        """Convert action index to motor speed commands.
+
+        Args:
+            action (int): Action index.
+            state (Tuple, optional): Current discrete state.
+
+        Returns:
+            List[float]: Motor speed commands [left, right]."""
         # Default speeds
         forward_speed = self.max_speed
         turn_speed = self.max_speed / 2
@@ -249,7 +309,13 @@ class QLearningAgent:
         return [0.0, 0.0]
 
     def save_q_table(self, filepath: str) -> bool:
-        """Persist the Q-table to disk."""
+        """Save the Q-table to a file.
+
+        Args:
+            filepath (str): Path to save the Q-table.
+
+        Returns:
+            bool: True if save was successful, False otherwise."""
         try:
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "wb") as f:
@@ -262,7 +328,13 @@ class QLearningAgent:
             return False
 
     def load_q_table(self, filepath: str) -> bool:
-        """Load Q-table from disk or initialize empty table."""
+        """Load the Q-table from a file or initialize an empty table.
+
+        Args:
+            filepath (str): Path to load the Q-table from.
+
+        Returns:
+            bool: True if load was successful, False otherwise."""
         try:
             if os.path.exists(filepath):
                 with open(filepath, "rb") as f:

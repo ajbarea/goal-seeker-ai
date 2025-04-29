@@ -42,15 +42,27 @@ class Slave(Robot):
     timeStep = RobotConfig.TIME_STEP
     maxSpeed = RobotConfig.MAX_SPEED
     mode = Mode.AVOID_OBSTACLES
-    motors = []
-    distanceSensors = []
 
     def boundSpeed(self, speed):
-        """Clamp speed to allowed range."""
+        """Clamp speed to the allowed range.
+
+        Args:
+            speed (float): Desired motor speed.
+
+        Returns:
+            float: Clamped speed within [-maxSpeed, maxSpeed].
+        """
         return max(-self.maxSpeed, min(self.maxSpeed, speed))
 
     def normalize_angle(self, angle):
-        """Normalize angle to range [-pi, pi]."""
+        """Normalize angle to the range [-π, π].
+
+        Args:
+            angle (float): Angle in radians.
+
+        Returns:
+            float: Normalized angle.
+        """
         while angle > math.pi:
             angle -= 2 * math.pi
         while angle < -math.pi:
@@ -60,6 +72,8 @@ class Slave(Robot):
     def __init__(self):
         """Initialize device interfaces, sensors, and Q-learning agent."""
         super(Slave, self).__init__()
+        self.motors = []
+        self.distanceSensors = []
 
         self.robot_name = self.getName()
         logger.info(f"Initializing robot: {self.robot_name}")
@@ -300,6 +314,7 @@ class Slave(Robot):
                         and not message.startswith("exploration:")
                         and not message.startswith("persistence:")
                     ):
+
                         logger.info(
                             f"Received command: {AnsiCodes.RED_FOREGROUND}{message}{AnsiCodes.RESET}"
                         )
@@ -563,7 +578,11 @@ class Slave(Robot):
                 break
 
     def get_discrete_state(self):
-        """Return discrete state tuple for RL agent."""
+        """Get the discrete state tuple for the RL agent.
+
+        Returns:
+            Optional[Tuple]: Discrete state tuple or None if invalid input.
+        """
         if not self.position or not self.target_position:
             return None
         left_wheel_velocity = self.motors[0].getVelocity()
@@ -594,12 +613,19 @@ class Slave(Robot):
         )
 
     def get_position_key(self, position):
-        """Convert position to grid cell key."""
+        """Convert a position to a grid cell key.
+
+        Args:
+            position (List[float]): [x, y] position.
+
+        Returns:
+            Tuple[int, int]: Grid cell key.
+        """
         grid_size = RLConfig.POSITION_MEMORY_THRESHOLD
         return (round(position[0] / grid_size), round(position[1] / grid_size))
 
     def update_position_history(self):
-        """Track position history and detect stuck patterns."""
+        """Update position history and detect stuck patterns."""
         if not self.position:
             return
 
@@ -627,7 +653,10 @@ class Slave(Robot):
                         break
 
     def initiate_recovery(self, intensity=0.5):
-        """Execute recovery strategies based on stuck history."""
+        """Initiate recovery strategies based on stuck history.
+
+        Args:
+            intensity (float): Recovery intensity factor."""
         self.recovery_attempts += 1
 
         if self.recovery_attempts < 3:
@@ -643,7 +672,10 @@ class Slave(Robot):
                 self.stuck_positions.clear()
 
     def execute_simple_avoidance(self, intensity):
-        """Perform simple avoidance maneuver."""
+        """Execute a simple avoidance maneuver.
+
+        Args:
+            intensity (float): Avoidance intensity factor."""
         # Back up
         self.motors[0].setVelocity(-self.maxSpeed * 0.7 * intensity)
         self.motors[1].setVelocity(-self.maxSpeed * 0.7 * intensity)
@@ -666,7 +698,10 @@ class Slave(Robot):
                 break
 
     def execute_perpendicular_movement(self, intensity):
-        """Perform perpendicular movement relative to target."""
+        """Execute perpendicular movement relative to the target.
+
+        Args:
+            intensity (float): Movement intensity factor."""
         if not self.target_position or not self.position:
             self.execute_random_exploration(intensity)
             return
@@ -722,7 +757,10 @@ class Slave(Robot):
                 break
 
     def execute_random_exploration(self, intensity):
-        """Perform random exploration to escape stuck situations."""
+        """Execute random exploration to escape stuck situations.
+
+        Args:
+            intensity (float): Exploration intensity factor."""
         # Backup in a random direction
         left_speed = -self.maxSpeed * (0.6 + self.rng.random() * 0.4) * intensity
         right_speed = -self.maxSpeed * (0.6 + self.rng.random() * 0.4) * intensity
@@ -756,7 +794,7 @@ class Slave(Robot):
                 break
 
     def save_learning_progress(self):
-        """Save learning progress to robot custom data."""
+        """Save the learning progress to the robot's custom data."""
         if hasattr(self, "q_agent") and self.q_agent.q_table:
             data = f"learning_active:{self.learning_active},exploration:{self.q_agent.exploration_rate}"
             try:
@@ -766,7 +804,7 @@ class Slave(Robot):
                 logger.error(f"Could not save data: {e}")
 
     def send_q_table(self):
-        """Log current Q-table size."""
+        """Log the current Q-table size."""
         if not hasattr(self, "emitter"):
             return
         try:
@@ -776,7 +814,7 @@ class Slave(Robot):
             logger.error(f"Error with Q-table: {e}")
 
     def plot_rewards(self):
-        """Plot and save reward history."""
+        """Plot and save the reward history."""
         if not self.rewards_history:
             logger.warning("No rewards to plot")
             return
@@ -813,7 +851,7 @@ class Slave(Robot):
         plt.close()
 
     def handle_reset(self):
-        """Stop motors and reset internal state."""
+        """Stop the motors and reset the internal state."""
         self.motors[0].setVelocity(0.0)
         self.motors[1].setVelocity(0.0)
         self.orientation = 0.0
