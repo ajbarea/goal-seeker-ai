@@ -27,14 +27,16 @@ def get_device(device_name: str = "auto") -> torch.device:
 
 
 class QNetwork(nn.Module):
-    def __init__(self, state_dim: int, action_dim: int, hidden: int = 128):
+    def __init__(self, state_dim: int, action_dim: int, hidden: int = 256):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden),
             nn.ReLU(),
             nn.Linear(hidden, hidden),
             nn.ReLU(),
-            nn.Linear(hidden, action_dim),
+            nn.Linear(hidden, hidden // 2),
+            nn.ReLU(),
+            nn.Linear(hidden // 2, action_dim),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -107,6 +109,12 @@ class DQNAgent:
             max_speed=max_speed,
         )
 
+        # Loss tracking for early stopping
+        self.td_losses: List[float] = []
+        self.recent_losses: List[float] = []  # For running average
+        self.recent_eval_rewards: List[float] = []  # For evaluation rewards
+        self.eval_mode: bool = False  # Flag to indicate evaluation mode (greedy)
+
     def update_q_table(
         self, state: StateType, action: int, reward: float, next_state: StateType
     ) -> None:
@@ -118,6 +126,9 @@ class DQNAgent:
     def choose_action(
         self, state: StateType, current_distance: Optional[float] = None
     ) -> int:
+        # Use eval_mode flag to determine whether to use greedy or ε-greedy
+        if self.eval_mode:
+            return self.choose_best_action(state, current_distance)
         return self.select_action(state)
 
     def choose_best_action(
@@ -189,22 +200,50 @@ class DQNAgent:
             x = _state_to_tensor(state, self.device)
             return int(self.online(x).argmax().cpu().item())
 
+    def set_eval_mode(self, eval_mode: bool = False) -> None:
+        """Set agent to evaluation mode (pure greedy) or training mode (ε-greedy)."""
+        self.eval_mode = eval_mode
+
+    def get_average_loss(self, window: int = 50) -> float:
+        """Get the average TD loss over the recent window."""
+        if not self.recent_losses:
+            return 0.0
+        return sum(self.recent_losses[-window:]) / len(self.recent_losses[-window:])
+
     def optimize(self) -> None:
         if len(self.buffer) < RLConfig.BATCH_SIZE:
             return
 
-        # Get batch data
+        # Get batch data - transfer to GPU if available
         s, a, r, s2, d = self.buffer.sample()
+        s = s.to(self.device)
+        a = a.to(self.device)
+        r = r.to(self.device)
+        s2 = s2.to(self.device)
+        d = d.to(self.device)
 
         # Forward pass
         q_values = self.online(s).gather(1, a.unsqueeze(1)).squeeze()
 
-        # Target computation without gradient tracking
+        # Target computation using Double DQN approach for reducing overestimation
         with torch.no_grad():
-            tgt_q = r + RLConfig.GAMMA * self.target(s2).max(1)[0] * (1 - d)
+            # Use online network to select actions, target network to evaluate them
+            best_actions = self.online(s2).argmax(dim=1, keepdim=True)
+            tgt_q = r + RLConfig.GAMMA * self.target(s2).gather(
+                1, best_actions
+            ).squeeze() * (1 - d)
 
         # Compute loss and backpropagate
-        loss = nn.functional.mse_loss(q_values, tgt_q)
+        loss = nn.functional.smooth_l1_loss(q_values, tgt_q)
+
+        # Track TD loss for early stopping
+        batch_loss = loss.item()
+        self.td_losses.append(batch_loss)
+        self.recent_losses.append(batch_loss)
+        # Keep recent_losses at a reasonable size
+        if len(self.recent_losses) > 1000:
+            self.recent_losses = self.recent_losses[-1000:]
+
         self.opt.zero_grad()
         loss.backward()
 

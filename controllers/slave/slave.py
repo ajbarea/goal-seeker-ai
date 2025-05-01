@@ -217,6 +217,37 @@ class Slave(Robot):
                     mode = message[14:].strip()
                     self.set_training_mode(mode)
 
+                elif message.startswith("set_eval_mode:"):
+                    try:
+                        eval_mode = message[14:] == "true"
+                        if hasattr(self.q_agent, "set_eval_mode"):
+                            self.q_agent.set_eval_mode(eval_mode)
+                            logger.info(f"Set evaluation mode: {eval_mode}")
+                    except Exception as e:
+                        logger.error(f"Error setting eval mode: {e}")
+
+                elif message == "get_td_loss":
+                    try:
+                        if hasattr(self.q_agent, "get_average_loss"):
+                            avg_loss = self.q_agent.get_average_loss()
+                            self.emitter.send(f"td_loss:{avg_loss}".encode("utf-8"))
+                            logger.debug(f"Sent TD loss: {avg_loss}")
+                    except Exception as e:
+                        logger.error(f"Error getting TD loss: {e}")
+
+                elif message.startswith("eval:"):
+                    coords = message[5:].split(",")
+                    if len(coords) == 2:
+                        try:
+                            x = float(coords[0])
+                            y = float(coords[1])
+                            self.target_position = [x, y]
+                            self.mode = self.Mode.SEEK_GOAL
+                            self.learning_active = False
+                            logger.info(f"Evaluation episode for target at ({x}, {y})")
+                        except ValueError:
+                            logger.error("Invalid coordinates for evaluation target")
+
                 else:
                     if message.startswith(RLConfig.ACTION_COMMAND_PREFIX):
                         logger.debug(f"Received action command: {message}")

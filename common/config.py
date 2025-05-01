@@ -101,20 +101,23 @@ class RLConfig:
     LEARNING_RATE_DECAY_DENOM: int = 10000
 
     # Episode limits
-    MAX_EPISODES: int = 100  # Fallback maximum if convergence not reached
+    MAX_EPISODES: int = 2000  # Fallback maximum if convergence not reached
     MAX_STEPS_PER_EPISODE: int = 1500
 
     # Early stopping parameters
     ENABLE_EARLY_STOPPING: bool = True
-    MIN_EPISODES: int = 20  # Minimum episodes before checking for convergence
-    CONVERGENCE_WINDOW: int = 10  # Number of episodes to check for stable performance
-    SUCCESS_RATE_THRESHOLD: float = 0.75  # Success rate threshold for convergence
-    REWARD_IMPROVEMENT_THRESHOLD: float = (
-        0.03  # Minimum improvement percentage to continue training
-    )
-    MAX_CONVERGENCE_ATTEMPTS: int = (
-        3  # Number of times to confirm convergence before stopping
-    )
+    MIN_EPISODES: int = 150
+    CONVERGENCE_WINDOW: int = 100
+    SUCCESS_RATE_THRESHOLD: float = 0.75
+    REWARD_IMPROVEMENT_THRESHOLD: float = 0.03
+    MAX_CONVERGENCE_ATTEMPTS: int = 3
+
+    # DQN-specific early stopping parameters
+    EVAL_INTERVAL: int = 20
+    EVAL_EPISODES: int = 10
+    MIN_EPSILON_DELTA: float = 0.5
+    PATIENCE: int = 5
+    LOSS_EPSILON: float = 0.01
 
     # Action persistence parameters
     ACTION_PERSISTENCE_INITIAL: int = 3
@@ -145,14 +148,14 @@ class RLConfig:
     USE_DQN: bool = False
 
     # DQN hyperparameters
-    BUFFER_SIZE: int = 10000
-    BATCH_SIZE: int = 64
+    BUFFER_SIZE: int = 50000
+    BATCH_SIZE: int = 128
     GAMMA: float = 0.99
-    LR: float = 1e-3
-    TARGET_UPDATE: int = 1000
+    LR: float = 5e-4
+    TARGET_UPDATE: int = 500
     EPS_START: float = 1.0
     EPS_END: float = 0.05
-    EPS_DECAY: int = 10000
+    EPS_DECAY: int = 20000
 
 
 class RobotConfig:
