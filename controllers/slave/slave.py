@@ -1,5 +1,6 @@
 """Provide robot control for obstacle avoidance, learning, and goal seeking."""
 
+from common.rl_utils import calculate_distance, log_goal_reached
 from controller import AnsiCodes, Robot  # type: ignore
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,14 +16,17 @@ from common.config import (
     DATA_DIR,
     Q_TABLE_PATH,
 )
-from common.rl_utils import calculate_distance
-from q_learning_agent import QLearningAgent
+from controllers.slave.q_learning_agent import QLearningAgent
+from dqn_agent import DQNAgent
 
 # Configure module-level logger
 logger = get_logger(
     __file__,
     level=getattr(logging, SimulationConfig.LOG_LEVEL_SLAVE, "INFO"),
 )
+
+# Define path for best Q-table
+BEST_Q_TABLE_PATH = os.path.join(DATA_DIR, "best_q_table.pkl")
 
 
 class Enumerate(object):
@@ -36,7 +40,9 @@ class Enumerate(object):
 class Slave(Robot):
     """Control robot modes for obstacle avoidance, learning, and goal seeking."""
 
-    Mode = Enumerate("STOP MOVE_FORWARD AVOID_OBSTACLES TURN SEEK_GOAL LEARN")
+    Mode = Enumerate(
+        "STOP MOVE_FORWARD AVOID_OBSTACLES TURN SEEK_GOAL LEARN RANDOM_WALK"
+    )
     timeStep = RobotConfig.TIME_STEP
     maxSpeed = RobotConfig.MAX_SPEED
     mode = Mode.AVOID_OBSTACLES
@@ -94,14 +100,9 @@ class Slave(Robot):
         self.position = [0, 0]
         self.orientation = 0.0
 
-        self.q_agent = QLearningAgent(
-            learning_rate=RLConfig.LEARNING_RATE,
-            min_learning_rate=RLConfig.MIN_LEARNING_RATE,
-            discount_factor=RLConfig.DISCOUNT_FACTOR,
-            min_discount_factor=RLConfig.MIN_DISCOUNT_FACTOR,
-            exploration_rate=RLConfig.EXPLORATION_RATE,
-            max_speed=self.maxSpeed,
-        )
+        # Instantiate RL agent
+        self.q_agent = None
+        self.set_training_mode("q_learning" if not RLConfig.USE_DQN else "dqn")
 
         self.learning_active = False
         self.target_position = None
@@ -167,20 +168,54 @@ class Slave(Robot):
                 elif message == "save_q_table":
                     try:
                         self.q_agent.save_q_table(Q_TABLE_PATH)
-                        logger.info(f"Q-table saved to {Q_TABLE_PATH}")
                     except Exception as e:
                         logger.error(f"Error saving Q-table: {e}")
+
+                elif message == "save_best_q_table":
+                    try:
+                        # If we have target-reaching success, save as best Q-table
+                        if (
+                            self.mode == self.Mode.LEARN
+                            or self.mode == self.Mode.SEEK_GOAL
+                        ) and self.target_reached_reported:
+                            self.q_agent.save_q_table(BEST_Q_TABLE_PATH)
+                            logger.info(f"Best Q-table saved to {BEST_Q_TABLE_PATH}")
+                        else:
+                            # Just save current as best if we don't have specific success criteria
+                            self.q_agent.save_q_table(BEST_Q_TABLE_PATH)
+                            logger.info(
+                                f"Current Q-table saved as best to {BEST_Q_TABLE_PATH}"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error saving best Q-table: {e}")
 
                 elif message == "load_q_table":
                     try:
                         self.q_agent.load_q_table(Q_TABLE_PATH)
-                        logger.info(f"Q-table loaded from {Q_TABLE_PATH}")
                     except Exception as e:
                         logger.error(f"Error loading Q-table: {e}")
 
+                elif message == "load_best_q_table":
+                    try:
+                        success = self.q_agent.load_q_table(BEST_Q_TABLE_PATH)
+                        if success:
+                            logger.info(f"Best Q-table loaded from {BEST_Q_TABLE_PATH}")
+                        else:
+                            # Fall back to regular Q-table if best doesn't exist
+                            self.q_agent.load_q_table(Q_TABLE_PATH)
+                            logger.info(
+                                "Best Q-table not found, loaded regular Q-table instead"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error loading best Q-table: {e}")
+
                 elif message == "clear_q_table":
                     self.q_agent.q_table.clear()
-                    logger.info("Cleared Q‑table for new training")
+                    logger.info("Clearing Q‑table for new training...")
+
+                elif message.startswith("training_mode:"):
+                    mode = message[14:].strip()
+                    self.set_training_mode(mode)
 
                 else:
                     if message.startswith(RLConfig.ACTION_COMMAND_PREFIX):
@@ -263,21 +298,23 @@ class Slave(Robot):
                     elif message == "move forward":
                         self.mode = self.Mode.MOVE_FORWARD
                     elif message == "stop":
-                        # Check if we're near the target before stopping
                         if (
                             self.mode == self.Mode.SEEK_GOAL
                             and self.target_position
-                            and calculate_distance(self.position, self.target_position)
-                            < RLConfig.TARGET_THRESHOLD
-                            and not self.target_reached_reported
+                            and log_goal_reached(
+                                calculate_distance(self.position, self.target_position),
+                                "SEEK_GOAL",
+                                logger,
+                            )
                         ):
-                            logger.info("🎯 Target reached in SEEK_GOAL mode!")
                             self.target_reached_reported = True
 
                         self.mode = self.Mode.STOP
                         self.handle_reset()
                     elif message == "turn":
                         self.mode = self.Mode.TURN
+                    elif message == "random walk":
+                        self.mode = self.Mode.RANDOM_WALK
 
             delta = (
                 self.distanceSensors[0].getValue() - self.distanceSensors[1].getValue()
@@ -352,6 +389,12 @@ class Slave(Robot):
 
                     speeds = self.q_agent.execute_action(action, self.current_state)
                     self.last_action = action
+
+            elif self.mode == self.Mode.RANDOM_WALK:
+                speeds = [
+                    self.boundSpeed(self.rng.uniform(-self.maxSpeed, self.maxSpeed)),
+                    self.boundSpeed(self.rng.uniform(-self.maxSpeed, self.maxSpeed)),
+                ]
 
             self.motors[0].setVelocity(speeds[0])
             self.motors[1].setVelocity(speeds[1])
@@ -444,6 +487,33 @@ class Slave(Robot):
         for _ in range(3):
             if self.step(self.timeStep) == -1:
                 break
+
+    def set_training_mode(self, mode):
+        """Set the training mode to Q-Learning or DQN.
+
+        Args:
+            mode (str): The training mode, either 'q_learning' or 'dqn'.
+        """
+        if mode == "q_learning":
+            self.q_agent = QLearningAgent(
+                learning_rate=RLConfig.LEARNING_RATE,
+                min_learning_rate=RLConfig.MIN_LEARNING_RATE,
+                discount_factor=RLConfig.DISCOUNT_FACTOR,
+                min_discount_factor=RLConfig.MIN_DISCOUNT_FACTOR,
+                exploration_rate=RLConfig.EXPLORATION_RATE,
+                max_speed=self.maxSpeed,
+            )
+            logger.info("Training mode set to Q-Learning.")
+        elif mode == "dqn":
+            self.q_agent = DQNAgent(
+                state_dim=5,
+                action_dim=5,
+                device="cpu",
+                max_speed=self.maxSpeed,
+            )
+            logger.info("Training mode set to DQN.")
+        else:
+            logger.error(f"Invalid training mode: {mode}")
 
 
 if __name__ == "__main__":

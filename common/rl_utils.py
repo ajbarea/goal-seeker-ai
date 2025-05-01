@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from typing import List, Tuple, Optional
-from common.config import RLConfig, get_logger
+from common.config import RLConfig, get_logger, RobotConfig
 
 logger = get_logger(__name__)
 
@@ -17,7 +17,7 @@ def get_discrete_state(
     left_sensor: float,
     right_sensor: float,
     wheel_velocities: List[float],
-    angle_bins: int = 8,
+    angle_bins: Optional[int] = None,
 ) -> Optional[Tuple[int, int, int, int, int]]:
     """Compute discrete state tuple for Q-learning.
 
@@ -30,11 +30,13 @@ def get_discrete_state(
         left_sensor (float): Left sensor reading.
         right_sensor (float): Right sensor reading.
         wheel_velocities (List[float]): Wheel velocities [left, right].
-        angle_bins (int): Number of angle discretization bins.
+        angle_bins (Optional[int]): Number of angle discretization bins.
 
     Returns:
         Optional[Tuple[int, int, int, int, int]]: (distance_bin, angle_bin, left_obs, right_obs, velocity_state) or None if invalid input.
     """
+    angle_bins = angle_bins or RLConfig.ANGLE_BINS
+
     if not position or not target_position:
         return None
 
@@ -55,7 +57,7 @@ def get_discrete_state(
 
 
 def discretize_distance(distance: float) -> int:
-    """Discretize distance into integer bins 0–6.
+    """Discretize distance into integer bins based on RLConfig thresholds.
 
     Args:
         distance (float): Continuous distance value.
@@ -63,20 +65,10 @@ def discretize_distance(distance: float) -> int:
     Returns:
         int: Discrete distance bin.
     """
-    if distance < 0.1:
-        return 0
-    elif distance < 0.25:
-        return 1
-    elif distance < 0.5:
-        return 2
-    elif distance < 0.75:
-        return 3
-    elif distance < 1.25:
-        return 4
-    elif distance < 2.0:
-        return 5
-    else:
-        return 6
+    for i, threshold in enumerate(RLConfig.DISTANCE_BINS):
+        if distance < threshold:
+            return i
+    return len(RLConfig.DISTANCE_BINS)
 
 
 def discretize_sensor(sensor_value: float) -> int:
@@ -147,18 +139,27 @@ def calculate_reward(
     """
     current_distance = calculate_distance(current_position[:2], target_position)
 
-    if current_distance < target_threshold:
+    if is_target_reached(current_distance, target_threshold):
         return RLConfig.TARGET_REACHED_REWARD
 
     if previous_distance is None:
         return 0.0
 
-    # reward is proportional to distance improvement
-    distance_improvement = previous_distance - current_distance
-    if distance_improvement > 0:
-        reward = 10.0 * distance_improvement
-    else:
-        reward = -8.0 * abs(distance_improvement)
+    # Potential-based shaping reward: previous_distance - γ * current_distance
+    shaping_delta = previous_distance - RLConfig.DISCOUNT_FACTOR * current_distance
+    # max possible movement per step: speed * timestep (ms->s)
+    max_delta = RobotConfig.MAX_SPEED * (RobotConfig.TIME_STEP / 1000.0)
+    if max_delta <= 0:
+        max_delta = 1.0
+    normalized = shaping_delta / max_delta
+
+    # Scale up the reward for making progress
+    reward = max(-1.0, min(1.0, normalized)) * RLConfig.REWARD_SHAPING_SCALE
+
+    # Add a small positive reward for being on the right track (heading toward goal)
+    if shaping_delta > 0:
+        reward += 0.1
+
     # include per-step penalty
     reward -= RLConfig.STEP_PENALTY
 
@@ -200,7 +201,8 @@ def calculate_distance(p1: List[float], p2: List[float]) -> float:
     Returns:
         float: Euclidean distance.
     """
-    return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
+    # Using NumPy’s optimized hypot for efficient Euclidean distance
+    return float(np.hypot(p1[0] - p2[0], p1[1] - p2[1]))
 
 
 def normalize_angle(angle: float) -> float:
@@ -212,10 +214,15 @@ def normalize_angle(angle: float) -> float:
     Returns:
         float: Normalized angle.
     """
-    while angle > math.pi:
+    if abs(angle % (2 * math.pi) - math.pi) < 1e-10:
+        return -math.pi
+
+    angle = angle % (2 * math.pi)
+
+    # Convert from [0, 2π] to [-π, π]
+    if angle > math.pi:
         angle -= 2 * math.pi
-    while angle < -math.pi:
-        angle += 2 * math.pi
+
     return angle
 
 
@@ -361,3 +368,25 @@ def get_position_cluster(
         if is_similar_position(pos, new_pos, threshold):
             return i
     return -1  # No matching cluster
+
+
+def is_target_reached(
+    distance: float, threshold: float = RLConfig.TARGET_THRESHOLD
+) -> bool:
+    """Return True if distance is below the goal threshold."""
+    return distance < threshold
+
+
+def log_goal_reached(
+    distance: float,
+    mode_name: str,
+    logger,
+    threshold: float = RLConfig.TARGET_THRESHOLD,
+) -> bool:
+    """
+    Check if distance < threshold, log a goal‑reached message, and return True.
+    """
+    if is_target_reached(distance, threshold):
+        logger.info(f"🎯 Target reached in {mode_name} mode!")
+        return True
+    return False

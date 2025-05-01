@@ -1,15 +1,19 @@
 """Manage simulation, RL training, goal seeking, and manual commands."""
 
-from controller import Supervisor  # type: ignore
+from controller import Supervisor, Keyboard, Emitter, Node, Field  # type: ignore
 import logging
 import math
 import os
 import random
-from common.rl_utils import calculate_distance, plot_q_learning_progress
+from typing import Optional, List
+from common.rl_utils import (
+    calculate_distance,
+    plot_q_learning_progress,
+    is_target_reached,
+)
 from common.config import (
     SimulationConfig,
     RobotConfig,
-    RLConfig,
     get_logger,
     DATA_DIR,
 )
@@ -17,43 +21,43 @@ from q_learning_controller import QLearningController
 
 
 class Driver(Supervisor):
-    TIME_STEP = RobotConfig.TIME_STEP
+    TIME_STEP: int = RobotConfig.TIME_STEP
 
     def __init__(self):
         """Initialize devices, logger, and RL controller."""
         super(Driver, self).__init__()
 
         # Initialize logger and interface devices
-        self.logger = get_logger(
+        self.logger: logging.Logger = get_logger(
             __file__,
             level=getattr(logging, SimulationConfig.LOG_LEVEL_DRIVER, "INFO"),
         )
-        self.emitter = self.getDevice("emitter")
-        self.keyboard = self.getKeyboard()
+        self.emitter: Emitter = self.getDevice("emitter")
+        self.keyboard: Keyboard = self.getKeyboard()
         self.keyboard.enable(self.TIME_STEP)
 
         # Retrieve robot node and translation field
-        self.robot = self.getFromDef("ROBOT1")
-        self.translation_field = self.robot.getField("translation")
+        self.robot: Node = self.getFromDef("ROBOT1")
+        self.translation_field: Field = self.robot.getField("translation")
 
         # Initialize target tracking state
-        self.target_position = None
-        self.previous_distance_to_target = None
+        self.target_position: Optional[List[float]] = None
+        self.previous_distance_to_target: Optional[float] = None
 
         # Initialize Q-learning controller
-        self.rl_controller = QLearningController(self, self.logger)
+        self.rl_controller: QLearningController = QLearningController(self, self.logger)
 
         # Initialize simulation step counter
-        self.step_counter = 0
+        self.step_counter: int = 0
 
         # Log initialization status
         self.logger.info("Driver initialization complete")
-        self.logger.info("Press 'I' for help")
+        self.logger.info("Press 'M' for help")
 
         # Initialize instance RNG
         self.rng = random.Random()
 
-    def run(self):
+    def run(self) -> None:
         """Run simulation loop for RL training, goal seeking, and manual commands."""
         self.display_help()
         previous_message = ""
@@ -84,12 +88,15 @@ class Driver(Supervisor):
                     self.logger.info(
                         f"Goal seeking in progress - Distance: {dist:.2f}, Time elapsed: {elapsed:.1f}s"
                     )
-                    if dist < RLConfig.TARGET_THRESHOLD:
+                    if is_target_reached(dist):
                         self.logger.info(
                             f"🎯 Successfully reached target in SEEK_GOAL mode after {elapsed:.1f}s"
                         )
                         self.emitter.send("stop".encode("utf-8"))
                         self.rl_controller.goal_seeking_active = False
+
+                # Call monitor_goal_seeking each iteration to check for timeout
+                self.monitor_goal_seeking(position)
 
             # Process manual keyboard commands
             k = self.keyboard.getKey()
@@ -110,10 +117,12 @@ class Driver(Supervisor):
                 )
             elif k == ord("R"):
                 self.safely_reset_robot()
-            elif k == ord("I"):
+            elif k == ord("M"):
                 self.display_help()
-            elif k == ord("L"):
-                self.rl_controller.start_learning()
+            elif k == ord("Q"):
+                self.rl_controller.start_learning("q_learning")
+            elif k == ord("D"):
+                self.rl_controller.start_learning("dqn")
 
             if message and message != previous_message:
                 previous_message = message
@@ -125,14 +134,13 @@ class Driver(Supervisor):
                 self.rl_controller.save_q_table()
                 break
 
-    def clear_pending_commands(self):
+    def clear_pending_commands(self) -> None:
         """Advance simulation steps to clear pending commands."""
         # Step simulation few times to clear pending emitter commands
         for _ in range(5):
             self.step(self.TIME_STEP)
-        return
 
-    def monitor_goal_seeking(self, position):
+    def monitor_goal_seeking(self, position: List[float]) -> None:
         """Monitor goal seeking progress, detect stuck conditions, and enforce timeout.
 
         Args:
@@ -144,7 +152,7 @@ class Driver(Supervisor):
         current_distance = calculate_distance(position[:2], self.target_position)
 
         # Check for target reached condition
-        if current_distance < RLConfig.TARGET_THRESHOLD:
+        if is_target_reached(current_distance):
             if not getattr(self.rl_controller, "goal_reached", False):
                 self.rl_controller.goal_reached = True
 
@@ -179,21 +187,22 @@ class Driver(Supervisor):
             self.rl_controller.goal_seeking_active = False
             self.emitter.send("stop".encode("utf-8"))
 
-    def display_help(self):
+    def display_help(self) -> None:
         """Log available keyboard commands to the logger."""
         self.logger.info(
             "\nCommands:\n"
-            " I - Display this help message\n"
+            " M - Display this help message\n"
             " A - Avoid obstacles mode\n"
             " F - Move forward\n"
             " S - Stop\n"
             " T - Turn\n"
             " R - Reset robot position\n"
             " G - Get (x,y) position of ROBOT1\n"
-            " L - Start reinforcement learning"
+            " Q - Start Q-learning RL\n"
+            " D - Start DQN RL"
         )
 
-    def safely_reset_robot(self):
+    def safely_reset_robot(self) -> None:
         """Reset robot to default position and resume obstacle avoidance."""
         self.emitter.send("stop".encode("utf-8"))
         self.step(self.TIME_STEP)
@@ -208,7 +217,7 @@ class Driver(Supervisor):
 
         self.logger.info("Command: Reset robot position")
 
-    def reset_robot_position(self, position):
+    def reset_robot_position(self, position: List[float]) -> None:
         """Reset robot to specified position with random offset and reset physics.
 
         Args:
@@ -261,14 +270,14 @@ class Driver(Supervisor):
 
         self.logger.debug(f"Robot reset to position: {randomized_position}")
 
-    def set_target_position(self, target_position):
+    def set_target_position(self, target_position: List[float]) -> None:
         """Set the target goal position.
 
         Args:
             target_position (List[float]): Target [x, y] coordinates."""
         self.target_position = target_position
 
-    def plot_training_results(self, rewards):
+    def plot_training_results(self, rewards: List[float]) -> None:
         """Plot and save training reward history to file.
 
         Args:

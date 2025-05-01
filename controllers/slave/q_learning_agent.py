@@ -29,7 +29,7 @@ class QLearningAgent:
         min_discount_factor: float = 0.7,
         exploration_rate: float = 0.3,
         max_speed: float = 10.0,
-        angle_bins: int = 8,
+        angle_bins: Optional[int] = None,
     ):
         """Initialize Q-learning agent with parameters and Q-table.
 
@@ -48,7 +48,7 @@ class QLearningAgent:
         self.min_discount_factor = min_discount_factor
         self.exploration_rate = exploration_rate
         self.max_speed = max_speed
-        self.angle_bins = angle_bins
+        self.angle_bins = angle_bins or RLConfig.ANGLE_BINS
         self.q_table: Dict[Tuple, List[float]] = {}
         self.total_updates = 0
         self.td_errors: List[float] = []
@@ -134,7 +134,7 @@ class QLearningAgent:
         if allow_stop:
             action_indices.append(4)
 
-        # Q‑value based decision (no blending)
+        # Q‑value based decision
         q_values = self.q_table[state]
         filtered_q = [(i, q_values[i]) for i in action_indices]
         max_q_value = max(q for _, q in filtered_q)
@@ -160,15 +160,6 @@ class QLearningAgent:
             self.q_table[next_state] = [0.0] * 5
 
         self.total_updates += 1
-
-        # Apply collision penalty if state indicates obstacle contact
-        # state format: (distance_bin, angle_bin, left_obs, right_obs, velocity_state)
-        _, _, left_obs, right_obs, _ = state
-        if (
-            left_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
-            or right_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
-        ):
-            reward -= RLConfig.COLLISION_PENALTY
 
         # Compute adaptive learning rate influenced by state distance bin
         distance_bin = state[0]

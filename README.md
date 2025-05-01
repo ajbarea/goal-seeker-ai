@@ -37,11 +37,13 @@ goal-seeker-ai/
 │   │       
 │   └── slave/               # Robot controller
 │       ├── slave.py         # Robot control code
-│       └── q_learning_agent.py  # Agent implementation
+│       ├── q_learning_agent.py  # Q-Learning implementation
+│       └── dqn_agent.py     # Deep Q-Network implementation
 │
 ├── data/                  # Saved Q‑tables and learning plots
 │
 └── worlds/                  # Webots world files
+    └── search-and-rescue.wbt  # Main simulation environment
 ```
 
 ## How to Run
@@ -53,14 +55,15 @@ goal-seeker-ai/
 
 ## Keyboard Controls
 
-- **I** - Display help message
+- **M** - Display help message
 - **A** - Switch to obstacle avoidance mode
 - **F** - Move forward
 - **S** - Stop
 - **T** - Turn
 - **R** - Reset robot position
 - **G** - Get current robot position
-- **L** - Start reinforcement learning
+- **Q** - Start Q-learning RL
+- **D** - Start DQN RL
 
 ## Reinforcement Learning Implementation
 
@@ -102,6 +105,18 @@ The robot's state is discretized into:
   - Learning curve visualizations
   - TD error tracking
 
+## DQN Implementation Details
+
+The project also implements Deep Q-Network (DQN) learning with the following features:
+
+- **Network Architecture**: 2-layer neural network with ReLU activations
+- **Replay Buffer**: Size 10000, stores state transitions for experience replay
+- **Batch Learning**: Mini-batch size of 64 for stable training
+- **Target Network**: Updated every 1000 steps for stable Q-learning
+- **Exploration**: Epsilon annealed from 1.0 to 0.05 over 10000 steps
+- **Optimization**: Adam optimizer with learning rate 1e-3
+- **Discount Factor**: 0.99 for future reward weighting
+
 ## Dependencies
 
 - Python 3.x
@@ -111,7 +126,7 @@ The robot's state is discretized into:
 
 ## Running Training
 
-1. Press **L** to start the reinforcement learning process
+1. Press **Q** to start Q-learning training, or **D** to start DQN training
 2. The robot will undergo multiple training episodes
 3. Learning statistics will be displayed in the console with emoji indicators for important events
 4. After training completes, the robot automatically switches to goal-seeking mode
