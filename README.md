@@ -126,3 +126,14 @@ The project includes tools to visualize and analyze the robot's learning perform
 - Success rate statistics
 - Learning rate and discount factor adaptation statistics
 - TD error analysis for learning quality assessment
+
+---
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://res.cloudinary.com/dumwa1w5x/image/upload/q_auto,f_auto,e_negate/v1779302138/brand_gwqy8l.png">
+  <img src="https://res.cloudinary.com/dumwa1w5x/image/upload/q_auto,f_auto/v1779302138/brand_gwqy8l.png" alt="" height="16" />
+</picture>&nbsp;&nbsp;2026 <a href="https://github.com/ajbarea">AJ Barea</a>
+
+</div>
