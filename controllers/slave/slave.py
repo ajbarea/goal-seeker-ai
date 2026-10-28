@@ -1,22 +1,24 @@
 """Provide robot control for obstacle avoidance, learning, and goal seeking."""
 
-from common.rl_utils import calculate_distance, log_goal_reached
-from controller import AnsiCodes, Robot  # type: ignore
-import numpy as np
-import matplotlib.pyplot as plt
-import os
-import random
 import logging
 import math
+import os
+import random
+
+import matplotlib.pyplot as plt
+import numpy as np
+from controller import AnsiCodes, Robot  # type: ignore
+
 from common.config import (
+    DATA_DIR,
     RLConfig,
     RobotConfig,
     SimulationConfig,
     get_logger,
-    DATA_DIR,
 )
-from controllers.slave.q_learning_agent import QLearningAgent
+from common.rl_utils import calculate_distance, log_goal_reached
 from controllers.slave.dqn_agent import DQNAgent
+from controllers.slave.q_learning_agent import QLearningAgent
 
 # Configure module-level logger
 logger = get_logger(
@@ -175,7 +177,9 @@ class Slave(Robot):
                             or self.mode == self.Mode.SEEK_GOAL
                         ) and self.target_reached_reported:
                             self.q_agent.save_q_table(self.q_agent.best_model_path)
-                            logger.info(f"Best Q-table saved to {self.q_agent.best_model_path}")
+                            logger.info(
+                                f"Best Q-table saved to {self.q_agent.best_model_path}"
+                            )
                         else:
                             # Just save current as best if we don't have specific success criteria
                             self.q_agent.save_q_table(self.q_agent.best_model_path)
@@ -193,9 +197,13 @@ class Slave(Robot):
 
                 elif message == "load_best_q_table":
                     try:
-                        success = self.q_agent.load_q_table(self.q_agent.best_model_path)
+                        success = self.q_agent.load_q_table(
+                            self.q_agent.best_model_path
+                        )
                         if success:
-                            logger.info(f"Best Q-table loaded from {self.q_agent.best_model_path}")
+                            logger.info(
+                                f"Best Q-table loaded from {self.q_agent.best_model_path}"
+                            )
                         else:
                             # Fall back to regular Q-table if best doesn't exist
                             self.q_agent.load_q_table(self.q_agent.model_path)
@@ -254,7 +262,6 @@ class Slave(Robot):
                         and not message.startswith("exploration:")
                         and not message.startswith("persistence:")
                     ):
-
                         logger.info(
                             f"Received command: {AnsiCodes.RED_FOREGROUND}{message}{AnsiCodes.RESET}"
                         )

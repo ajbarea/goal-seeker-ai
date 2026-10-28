@@ -2,8 +2,8 @@
 
 import logging
 import os
-from typing import List
 from datetime import datetime
+from typing import List
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data"))
 Q_TABLE_PATH = os.path.join(DATA_DIR, "q_table.pkl")

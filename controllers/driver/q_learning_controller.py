@@ -1,8 +1,9 @@
 """Manage Q-learning training sessions and goal seeking control flow."""
 
-import math
-from typing import List, Optional, Any
 import logging
+import math
+from typing import Any, List, Optional
+
 from common.config import (
     RLConfig,
     RobotConfig,
@@ -336,7 +337,7 @@ class QLearningController:
 
             # Run steps until completion or timeout
             success = False
-            for step in range(RLConfig.MAX_STEPS_PER_EPISODE):
+            for _step in range(RLConfig.MAX_STEPS_PER_EPISODE):
                 position = self.driver.translation_field.getSFVec3f()
 
                 # Calculate reward but don't send to agent
@@ -349,7 +350,7 @@ class QLearningController:
 
                 # Check if target reached
                 if current_distance < RLConfig.TARGET_THRESHOLD:
-                    self.logger.info(f"🎯 Evaluation episode {i+1} reached target!")
+                    self.logger.info(f"🎯 Evaluation episode {i + 1} reached target!")
                     success = True
                     eval_successes += 1
                     break
@@ -364,7 +365,7 @@ class QLearningController:
             eval_final_distances.append(current_distance)
 
             self.logger.info(
-                f"Eval episode {i+1}: reward={total_reward:.2f}, success={success}, final_distance={current_distance:.2f}"
+                f"Eval episode {i + 1}: reward={total_reward:.2f}, success={success}, final_distance={current_distance:.2f}"
             )
 
         # Switch back to training mode
@@ -386,7 +387,9 @@ class QLearningController:
 
         # Only proceed with current training if there was some success
         if eval_success_rate < 5.0 and self.episode_count > 300:
-            self.logger.warning("Very low evaluation success rate. Consider restarting training.")
+            self.logger.warning(
+                "Very low evaluation success rate. Consider restarting training."
+            )
 
         # Collect TD loss if using DQN
         try:
@@ -466,12 +469,16 @@ class QLearningController:
 
         # Minimum success rate check - if success rate is really bad, don't stop training
         if len(self.eval_rewards) >= RLConfig.EVAL_EPISODES:
-            eval_success_count = sum(1 for r in self.eval_rewards if r > 150)  # Approx threshold for success
+            eval_success_count = sum(
+                1 for r in self.eval_rewards if r > 150
+            )  # Approx threshold for success
             eval_success_rate = eval_success_count / len(self.eval_rewards)
 
             # If success rate is below 20%, definitely don't stop yet
             if eval_success_rate < 0.2:
-                self.logger.info(f"Evaluation success rate too low: {eval_success_rate:.2f}, continuing training")
+                self.logger.info(
+                    f"Evaluation success rate too low: {eval_success_rate:.2f}, continuing training"
+                )
                 self.patience_counter = 0
                 return False
 
@@ -482,7 +489,9 @@ class QLearningController:
         if avg_eval > self.best_eval_reward + RLConfig.MIN_EPSILON_DELTA:
             self.best_eval_reward = avg_eval
             self.patience_counter = 0
-            self.logger.info(f"New best eval reward: {avg_eval:.2f}, resetting patience")
+            self.logger.info(
+                f"New best eval reward: {avg_eval:.2f}, resetting patience"
+            )
             return False
         else:
             self.patience_counter += 1

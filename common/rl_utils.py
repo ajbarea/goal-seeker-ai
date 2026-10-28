@@ -1,11 +1,13 @@
 """Reinforcement learning utilities for state discretization, reward computation, and progress visualization."""
 
 import math
-import numpy as np
-import matplotlib.pyplot as plt
 import os
-from typing import List, Tuple, Optional
-from common.config import RLConfig, get_logger, RobotConfig
+from typing import List, Optional, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+from common.config import RLConfig, RobotConfig, get_logger
 
 logger = get_logger(__name__)
 
@@ -48,8 +50,9 @@ def get_discrete_state(
     # Convert observations into discrete bins
     distance_bin = discretize_distance(distance)
     angle_bin = int((rel_angle + math.pi) / (2 * math.pi / angle_bins)) % angle_bins
-    left_obs, right_obs = discretize_sensor(left_sensor), discretize_sensor(
-        right_sensor
+    left_obs, right_obs = (
+        discretize_sensor(left_sensor),
+        discretize_sensor(right_sensor),
     )
     velocity_state = discretize_velocity(wheel_velocities)
 
@@ -191,7 +194,11 @@ def calculate_reward(
         ):
             base_reward -= RLConfig.COLLISION_PENALTY
 
-    if use_potential_shaping and previous_position is not None and discount_factor is not None:
+    if (
+        use_potential_shaping
+        and previous_position is not None
+        and discount_factor is not None
+    ):
         phi_prev = calculate_potential(previous_position, target_position)
         phi_curr = calculate_potential(current_position, target_position)
         return base_reward + discount_factor * phi_curr - phi_prev

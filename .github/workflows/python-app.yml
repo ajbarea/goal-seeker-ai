@@ -1,7 +1,4 @@
-# This workflow installs Python dependencies, runs lint + pytest with a single Python version.
-# Docs: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
-
-name: Python application
+name: CI
 
 on:
   push:
@@ -13,38 +10,28 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v6.0.2
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: "3.10"
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pytest
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-      - name: Lint with flake8
-        run: |
-          # stop the build if there are Python syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-      - name: Test with pytest
-        # pytest returns exit code 5 when zero tests are collected, which is the
-        # current state of this WIP repo. Treat 5 as success so CI gates on real
-        # failures (1) instead of "no tests yet". Remove this guard once a test
-        # suite lands. Verified May 2026: pytest 9.x still emits 5 in this case
-        # (docs.pytest.org/en/latest/reference/exit-codes.html).
-        run: |
-          set +e
-          pytest
-          status=$?
-          if [ "$status" = "5" ]; then
-            echo "::notice::pytest collected 0 tests — treating as success until a suite lands."
-            exit 0
-          fi
-          exit $status
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: 0.11.5
+          enable-cache: true
+      - name: Lockfile matches pyproject.toml
+        run: uv lock --check
+      - name: Install
+        run: uv sync --frozen
+      - name: ruff format
+        run: uv run ruff format --check .
+      - name: ruff check
+        run: uv run ruff check .
+      # The Webots controllers themselves need the simulator; the tests cover
+      # everything that imports without it.
+      - name: pytest
+        run: uv run pytest -q
+      - name: Minimize uv cache
+        if: always()
+        run: uv cache prune --ci

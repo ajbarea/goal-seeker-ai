@@ -1,12 +1,14 @@
-import random
 import collections
-from typing import List, Tuple, Deque, Optional
+import random
+from typing import Deque, List, Optional, Tuple
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
 from common.config import BEST_DQN_MODEL_PATH, DQN_MODEL_PATH, RLConfig
-from controllers.slave.q_learning_agent import QLearningAgent
 from common.rl_utils import get_discrete_state as util_get_discrete_state
+from controllers.slave.q_learning_agent import QLearningAgent
 
 StateType = Tuple[int, int, int, int, int]
 BatchType = Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
@@ -47,19 +49,19 @@ class ReplayBuffer:
     def __init__(
         self,
         capacity: int = RLConfig.BUFFER_SIZE,
-        device: torch.device = torch.device("cpu"),
+        device: Optional[torch.device] = None,
     ):
         self.buffer: Deque[Tuple[StateType, int, float, StateType, bool]] = (
             collections.deque(maxlen=capacity)
         )
-        self.device = device
+        self.device = device or torch.device("cpu")
 
     def push(self, s: StateType, a: int, r: float, s2: StateType, d: bool) -> None:
         self.buffer.append((s, a, r, s2, d))
 
     def sample(self, batch_size: int = RLConfig.BATCH_SIZE) -> BatchType:
         batch = random.sample(self.buffer, batch_size)
-        s, a, r, s2, d = zip(*batch)
+        s, a, r, s2, d = zip(*batch, strict=True)
         return (
             torch.tensor(s, dtype=torch.float32, device=self.device),
             torch.tensor(a, dtype=torch.int64, device=self.device),
@@ -94,7 +96,7 @@ class DQNAgent:
         if self.cuda_available and device != "cpu":
             if memory_fraction > 0 and memory_fraction <= 1.0:
                 torch.cuda.set_per_process_memory_fraction(memory_fraction)
-                print(f"CUDA enabled. Using {memory_fraction*100:.1f}% of GPU memory")
+                print(f"CUDA enabled. Using {memory_fraction * 100:.1f}% of GPU memory")
             torch.backends.cudnn.benchmark = True  # Optimize for fixed input sizes
 
         self.online = QNetwork(state_dim, action_dim).to(self.device)

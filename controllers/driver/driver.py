@@ -1,21 +1,23 @@
 """Manage simulation, RL training, goal seeking, and manual commands."""
 
-from controller import Supervisor, Keyboard, Emitter, Node, Field  # type: ignore
 import logging
 import math
 import os
 import random
-from typing import Optional, List
+from typing import List, Optional
+
+from controller import Emitter, Field, Keyboard, Node, Supervisor  # type: ignore
+
+from common.config import (
+    DATA_DIR,
+    RobotConfig,
+    SimulationConfig,
+    get_logger,
+)
 from common.rl_utils import (
     calculate_distance,
-    plot_q_learning_progress,
     is_target_reached,
-)
-from common.config import (
-    SimulationConfig,
-    RobotConfig,
-    get_logger,
-    DATA_DIR,
+    plot_q_learning_progress,
 )
 from controllers.driver.q_learning_controller import QLearningController
 
