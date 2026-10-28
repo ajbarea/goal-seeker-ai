@@ -121,7 +121,8 @@ class QLearningController:
         Returns:
             float: Calculated reward value.
         """
-        discount = RLConfig.DISCOUNT_FACTOR
+        # Shaping must use the learner's own discount factor.
+        discount = RLConfig.GAMMA if self.using_dqn else RLConfig.DISCOUNT_FACTOR
         reward = calculate_reward(
             current_position[:2],
             self.driver.target_position,
@@ -148,6 +149,7 @@ class QLearningController:
 
         current_distance = calculate_distance(position[:2], self.driver.target_position)
 
+        reward = 0.0
         if self.previous_distance_to_target is not None:
             reward = self.calculate_reward(position)
             # send reward to slave; policy and Q-table updates are handled in slave
@@ -191,6 +193,7 @@ class QLearningController:
         self.previous_distance_to_target = calculate_distance(
             start_position[:2], target_position
         )
+        self.previous_position = start_position[:2]
 
         self.logger.info(f"Starting episode {self.episode_count}/{self.max_episodes}")
 
@@ -325,6 +328,7 @@ class QLearningController:
             self.previous_distance_to_target = calculate_distance(
                 start_position[:2], target_position
             )
+            self.previous_position = start_position[:2]
 
             # Send learn command but with eval flag
             target_msg = f"eval:{target_position[0]},{target_position[1]}"
