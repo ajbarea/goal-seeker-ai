@@ -14,19 +14,15 @@ from common.config import (
     SimulationConfig,
     get_logger,
     DATA_DIR,
-    Q_TABLE_PATH,
 )
 from controllers.slave.q_learning_agent import QLearningAgent
-from dqn_agent import DQNAgent
+from controllers.slave.dqn_agent import DQNAgent
 
 # Configure module-level logger
 logger = get_logger(
     __file__,
     level=getattr(logging, SimulationConfig.LOG_LEVEL_SLAVE, "INFO"),
 )
-
-# Define path for best Q-table
-BEST_Q_TABLE_PATH = os.path.join(DATA_DIR, "best_q_table.pkl")
 
 
 class Enumerate(object):
@@ -167,7 +163,7 @@ class Slave(Robot):
 
                 elif message == "save_q_table":
                     try:
-                        self.q_agent.save_q_table(Q_TABLE_PATH)
+                        self.q_agent.save_q_table(self.q_agent.model_path)
                     except Exception as e:
                         logger.error(f"Error saving Q-table: {e}")
 
@@ -178,31 +174,31 @@ class Slave(Robot):
                             self.mode == self.Mode.LEARN
                             or self.mode == self.Mode.SEEK_GOAL
                         ) and self.target_reached_reported:
-                            self.q_agent.save_q_table(BEST_Q_TABLE_PATH)
-                            logger.info(f"Best Q-table saved to {BEST_Q_TABLE_PATH}")
+                            self.q_agent.save_q_table(self.q_agent.best_model_path)
+                            logger.info(f"Best Q-table saved to {self.q_agent.best_model_path}")
                         else:
                             # Just save current as best if we don't have specific success criteria
-                            self.q_agent.save_q_table(BEST_Q_TABLE_PATH)
+                            self.q_agent.save_q_table(self.q_agent.best_model_path)
                             logger.info(
-                                f"Current Q-table saved as best to {BEST_Q_TABLE_PATH}"
+                                f"Current Q-table saved as best to {self.q_agent.best_model_path}"
                             )
                     except Exception as e:
                         logger.error(f"Error saving best Q-table: {e}")
 
                 elif message == "load_q_table":
                     try:
-                        self.q_agent.load_q_table(Q_TABLE_PATH)
+                        self.q_agent.load_q_table(self.q_agent.model_path)
                     except Exception as e:
                         logger.error(f"Error loading Q-table: {e}")
 
                 elif message == "load_best_q_table":
                     try:
-                        success = self.q_agent.load_q_table(BEST_Q_TABLE_PATH)
+                        success = self.q_agent.load_q_table(self.q_agent.best_model_path)
                         if success:
-                            logger.info(f"Best Q-table loaded from {BEST_Q_TABLE_PATH}")
+                            logger.info(f"Best Q-table loaded from {self.q_agent.best_model_path}")
                         else:
                             # Fall back to regular Q-table if best doesn't exist
-                            self.q_agent.load_q_table(Q_TABLE_PATH)
+                            self.q_agent.load_q_table(self.q_agent.model_path)
                             logger.info(
                                 "Best Q-table not found, loaded regular Q-table instead"
                             )
@@ -435,7 +431,7 @@ class Slave(Robot):
                     self.save_learning_progress()
                     self.plot_rewards()
                 logger.info("Robot controller exiting")
-                self.q_agent.save_q_table(Q_TABLE_PATH)
+                self.q_agent.save_q_table(self.q_agent.model_path)
                 break
 
     def get_discrete_state(self):

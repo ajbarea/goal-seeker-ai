@@ -5,7 +5,7 @@ import pickle
 import os
 from typing import Dict, List, Tuple, Optional
 from common.rl_utils import get_discrete_state
-from common.config import RLConfig, get_logger
+from common.config import BEST_Q_TABLE_PATH, Q_TABLE_PATH, RLConfig, get_logger
 
 # Configure module-level logger
 logger = get_logger("agent")
@@ -20,6 +20,10 @@ class QLearningAgent:
     TURN_RIGHT = 2
     BACKWARD = 3
     STOP = 4
+
+    # Where this agent's learned model lives (a pickled Q-table).
+    model_path = Q_TABLE_PATH
+    best_model_path = BEST_Q_TABLE_PATH
 
     def __init__(
         self,

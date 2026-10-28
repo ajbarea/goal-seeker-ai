@@ -4,8 +4,8 @@ from typing import List, Tuple, Deque, Optional
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from common.config import RLConfig
-from q_learning_agent import QLearningAgent
+from common.config import BEST_DQN_MODEL_PATH, DQN_MODEL_PATH, RLConfig
+from controllers.slave.q_learning_agent import QLearningAgent
 from common.rl_utils import get_discrete_state as util_get_discrete_state
 
 StateType = Tuple[int, int, int, int, int]
@@ -74,6 +74,10 @@ class ReplayBuffer:
 
 class DQNAgent:
     """DQN agent wrapper that mimics QLearningAgent interface for drop-in use."""
+
+    # Where this agent's learned model lives (a torch checkpoint).
+    model_path = DQN_MODEL_PATH
+    best_model_path = BEST_DQN_MODEL_PATH
 
     def __init__(
         self,

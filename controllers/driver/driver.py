@@ -17,7 +17,7 @@ from common.config import (
     get_logger,
     DATA_DIR,
 )
-from q_learning_controller import QLearningController
+from controllers.driver.q_learning_controller import QLearningController
 
 
 class Driver(Supervisor):

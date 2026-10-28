@@ -7,6 +7,9 @@ from datetime import datetime
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data"))
 Q_TABLE_PATH = os.path.join(DATA_DIR, "q_table.pkl")
+BEST_Q_TABLE_PATH = os.path.join(DATA_DIR, "best_q_table.pkl")
+DQN_MODEL_PATH = os.path.join(DATA_DIR, "dqn_model.pt")
+BEST_DQN_MODEL_PATH = os.path.join(DATA_DIR, "best_dqn_model.pt")
 
 
 def setup_logger(
