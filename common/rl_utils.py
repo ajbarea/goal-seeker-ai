@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from typing import List, Tuple, Optional
-from common.config import RLConfig, get_logger
+from common.config import RLConfig, get_logger, RobotConfig
 
 logger = get_logger(__name__)
 
@@ -17,18 +17,35 @@ def get_discrete_state(
     left_sensor: float,
     right_sensor: float,
     wheel_velocities: List[float],
-    angle_bins: int = 8,
-) -> Optional[Tuple]:
-    """Compute a discrete state tuple for Q‑learning."""
+    angle_bins: Optional[int] = None,
+) -> Optional[Tuple[int, int, int, int, int]]:
+    """Compute discrete state tuple for Q-learning.
+
+    Discretize position, orientation, sensor readings, and wheel velocities into state bins.
+
+    Args:
+        position (List[float]): Current [x, y] position.
+        target_position (List[float]): Target [x, y] position.
+        orientation (float): Heading angle in radians.
+        left_sensor (float): Left sensor reading.
+        right_sensor (float): Right sensor reading.
+        wheel_velocities (List[float]): Wheel velocities [left, right].
+        angle_bins (Optional[int]): Number of angle discretization bins.
+
+    Returns:
+        Optional[Tuple[int, int, int, int, int]]: (distance_bin, angle_bin, left_obs, right_obs, velocity_state) or None if invalid input.
+    """
+    angle_bins = angle_bins or RLConfig.ANGLE_BINS
+
     if not position or not target_position:
         return None
 
-    # Compute Euclidean distance and relative angle to the target
+    # Compute continuous metrics for discretization
     distance = calculate_distance(position, target_position)
     dx, dy = target_position[0] - position[0], target_position[1] - position[1]
     rel_angle = normalize_angle(math.atan2(dy, dx) - orientation)
 
-    # Convert continuous observations into discrete state bins
+    # Convert observations into discrete bins
     distance_bin = discretize_distance(distance)
     angle_bin = int((rel_angle + math.pi) / (2 * math.pi / angle_bins)) % angle_bins
     left_obs, right_obs = discretize_sensor(left_sensor), discretize_sensor(
@@ -40,25 +57,29 @@ def get_discrete_state(
 
 
 def discretize_distance(distance: float) -> int:
-    """Discretize continuous distance into bins 0–6."""
-    if distance < 0.1:
-        return 0
-    elif distance < 0.25:
-        return 1
-    elif distance < 0.5:
-        return 2
-    elif distance < 0.75:
-        return 3
-    elif distance < 1.25:
-        return 4
-    elif distance < 2.0:
-        return 5
-    else:
-        return 6
+    """Discretize distance into integer bins based on RLConfig thresholds.
+
+    Args:
+        distance (float): Continuous distance value.
+
+    Returns:
+        int: Discrete distance bin.
+    """
+    for i, threshold in enumerate(RLConfig.DISTANCE_BINS):
+        if distance < threshold:
+            return i
+    return len(RLConfig.DISTANCE_BINS)
 
 
 def discretize_sensor(sensor_value: float) -> int:
-    """Discretize sensor reading into states 0–3 based on thresholds."""
+    """Convert sensor reading into discrete states 0–3.
+
+    Args:
+        sensor_value (float): Raw sensor measurement.
+
+    Returns:
+        int: Discrete sensor state.
+    """
     if sensor_value < 100:
         return 0
     elif sensor_value < 400:
@@ -70,7 +91,14 @@ def discretize_sensor(sensor_value: float) -> int:
 
 
 def discretize_velocity(wheel_velocities: List[float]) -> int:
-    """Determine discrete motion state (0–4) from wheel velocities."""
+    """Determine discrete motion state from wheel velocities.
+
+    Args:
+        wheel_velocities (List[float]): [left_vel, right_vel] velocities.
+
+    Returns:
+        int: Motion state (0: stopped, 1: slow forward, 2: fast forward, 3: backward, 4: turning).
+    """
     left_vel = wheel_velocities[0]
     right_vel = wheel_velocities[1]
     avg_speed = (abs(left_vel) + abs(right_vel)) / 2
@@ -96,21 +124,42 @@ def calculate_reward(
     left_sensor: Optional[float] = None,
     right_sensor: Optional[float] = None,
 ) -> float:
-    """Compute the reward based on distance progress, step penalty, and collision penalty."""
+    """Compute reward from progress, step penalty, and collisions.
+
+    Args:
+        current_position (List[float]): Current [x, y] position.
+        target_position (List[float]): Target [x, y] position.
+        previous_distance (Optional[float]): Distance from previous step.
+        target_threshold (float): Distance threshold for success.
+        left_sensor (Optional[float]): Left sensor reading.
+        right_sensor (Optional[float]): Right sensor reading.
+
+    Returns:
+        float: Calculated reward value.
+    """
     current_distance = calculate_distance(current_position[:2], target_position)
 
-    if current_distance < target_threshold:
+    if is_target_reached(current_distance, target_threshold):
         return RLConfig.TARGET_REACHED_REWARD
 
     if previous_distance is None:
         return 0.0
 
-    # reward is proportional to distance improvement
-    distance_improvement = previous_distance - current_distance
-    if distance_improvement > 0:
-        reward = 10.0 * distance_improvement
-    else:
-        reward = -8.0 * abs(distance_improvement)
+    # Potential-based shaping reward: previous_distance - γ * current_distance
+    shaping_delta = previous_distance - RLConfig.DISCOUNT_FACTOR * current_distance
+    # max possible movement per step: speed * timestep (ms->s)
+    max_delta = RobotConfig.MAX_SPEED * (RobotConfig.TIME_STEP / 1000.0)
+    if max_delta <= 0:
+        max_delta = 1.0
+    normalized = shaping_delta / max_delta
+
+    # Scale up the reward for making progress
+    reward = max(-1.0, min(1.0, normalized)) * RLConfig.REWARD_SHAPING_SCALE
+
+    # Add a small positive reward for being on the right track (heading toward goal)
+    if shaping_delta > 0:
+        reward += 0.1
+
     # include per-step penalty
     reward -= RLConfig.STEP_PENALTY
 
@@ -128,7 +177,14 @@ def calculate_reward(
 
 
 def get_action_name(action: int) -> str:
-    """Return the descriptive name for a given action index."""
+    """Get human-readable action name from index.
+
+    Args:
+        action (int): Action index.
+
+    Returns:
+        str: Action name or 'UNKNOWN_ACTION' if invalid.
+    """
     action_names = ["FORWARD", "TURN_LEFT", "TURN_RIGHT", "BACKWARD", "STOP"]
     if 0 <= action < len(action_names):
         return action_names[action]
@@ -136,16 +192,37 @@ def get_action_name(action: int) -> str:
 
 
 def calculate_distance(p1: List[float], p2: List[float]) -> float:
-    """Compute the Euclidean distance between two 2D points."""
-    return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
+    """Compute Euclidean distance between two 2D points.
+
+    Args:
+        p1 (List[float]): First [x, y] point.
+        p2 (List[float]): Second [x, y] point.
+
+    Returns:
+        float: Euclidean distance.
+    """
+    # Using NumPy’s optimized hypot for efficient Euclidean distance
+    return float(np.hypot(p1[0] - p2[0], p1[1] - p2[1]))
 
 
 def normalize_angle(angle: float) -> float:
-    """Normalize an angle to the range [–π, π]."""
-    while angle > math.pi:
+    """Normalize angle to range [-π, π].
+
+    Args:
+        angle (float): Angle in radians.
+
+    Returns:
+        float: Normalized angle.
+    """
+    if abs(angle % (2 * math.pi) - math.pi) < 1e-10:
+        return -math.pi
+
+    angle = angle % (2 * math.pi)
+
+    # Convert from [0, 2π] to [-π, π]
+    if angle > math.pi:
         angle -= 2 * math.pi
-    while angle < -math.pi:
-        angle += 2 * math.pi
+
     return angle
 
 
@@ -158,7 +235,20 @@ def plot_q_learning_progress(
     filename: Optional[str] = None,
     save_dir: Optional[str] = None,
 ) -> None:
-    """Plot reward history with moving averages and exponential moving average."""
+    """Plot Q-learning reward history with moving averages.
+
+    Args:
+        rewards (List[float]): Reward per episode.
+        window (int): Window size for long moving average.
+        short_window (int): Window size for short moving average.
+        ema_span (int): Span for exponential moving average.
+        title (str): Plot title.
+        filename (Optional[str]): Filename (without extension) to save plot.
+        save_dir (Optional[str]): Directory to save plot image.
+
+    Returns:
+        None
+    """
     if not rewards:
         logger.warning("No rewards to plot")
         return
@@ -212,8 +302,17 @@ def plot_q_learning_progress(
     plt.close()
 
 
-def get_nearby_states(state: Tuple) -> List[Tuple]:
-    """Return neighboring states for state blending."""
+def get_nearby_states(
+    state: Tuple[int, int, int, int, int],
+) -> List[Tuple[int, int, int, int, int]]:
+    """Get neighboring states for state blending.
+
+    Args:
+        state (Tuple[int, int, int, int, int]): Base discrete state.
+
+    Returns:
+        List[Tuple[int, int, int, int, int]]: Nearby state tuples.
+    """
     distance_bin, angle_bin, left_obstacle, right_obstacle, is_moving = state
     nearby_states = []
 
@@ -239,15 +338,55 @@ def get_nearby_states(state: Tuple) -> List[Tuple]:
 def is_similar_position(
     pos1: List[float], pos2: List[float], threshold: float = 0.05
 ) -> bool:
-    """Determine whether two positions are within a given threshold."""
+    """Check if two positions are within threshold distance.
+
+    Args:
+        pos1 (List[float]): First [x, y] position.
+        pos2 (List[float]): Second [x, y] position.
+        threshold (float): Distance threshold.
+
+    Returns:
+        bool: True if distance < threshold.
+    """
     return calculate_distance(pos1, pos2) < threshold
 
 
 def get_position_cluster(
     positions: List[List[float]], new_pos: List[float], threshold: float = 0.05
 ) -> int:
-    """Assign a new position to an existing cluster or return –1 if none match."""
+    """Find cluster index for a new position or return -1.
+
+    Args:
+        positions (List[List[float]]): Existing position clusters.
+        new_pos (List[float]): New [x, y] position.
+        threshold (float): Similarity distance threshold.
+
+    Returns:
+        int: Matching cluster index or -1 if none.
+    """
     for i, pos in enumerate(positions):
         if is_similar_position(pos, new_pos, threshold):
             return i
     return -1  # No matching cluster
+
+
+def is_target_reached(
+    distance: float, threshold: float = RLConfig.TARGET_THRESHOLD
+) -> bool:
+    """Return True if distance is below the goal threshold."""
+    return distance < threshold
+
+
+def log_goal_reached(
+    distance: float,
+    mode_name: str,
+    logger,
+    threshold: float = RLConfig.TARGET_THRESHOLD,
+) -> bool:
+    """
+    Check if distance < threshold, log a goal‑reached message, and return True.
+    """
+    if is_target_reached(distance, threshold):
+        logger.info(f"🎯 Target reached in {mode_name} mode!")
+        return True
+    return False
