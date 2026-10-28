@@ -3,13 +3,21 @@
 import logging
 import os
 from datetime import datetime
+from typing import List
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data"))
 Q_TABLE_PATH = os.path.join(DATA_DIR, "q_table.pkl")
 BEST_Q_TABLE_PATH = os.path.join(DATA_DIR, "best_q_table.pkl")
+DQN_MODEL_PATH = os.path.join(DATA_DIR, "dqn_model.pt")
+BEST_DQN_MODEL_PATH = os.path.join(DATA_DIR, "best_dqn_model.pt")
 
 
-def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
+def setup_logger(
+    name: str,
+    level: int = logging.INFO,
+    log_to_file: bool = False,
+    log_dir: str = "logs",
+) -> logging.Logger:
     """Create and configure a logger with console output and optional file logging.
 
     Args:
@@ -31,11 +39,11 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
     if logger.handlers:
         logger.handlers.clear()
 
-    # Configure console handler
+    # Initialize console handler for output
     console_handler = logging.StreamHandler()
     console_handler.setLevel(level)
 
-    # Define log message format for log records
+    # Set message format for log records
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -43,12 +51,8 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Configure file logging if enabled
     if log_to_file:
-        # Ensure log directory exists for file logging
         os.makedirs(log_dir, exist_ok=True)
-
-        # Construct timestamped log filename for log file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = os.path.join(log_dir, f"{name.split('.')[-1]}_{timestamp}.log")
 
@@ -60,8 +64,21 @@ def setup_logger(name, level=logging.INFO, log_to_file=False, log_dir="logs"):
     return logger
 
 
-def get_logger(name, level=logging.INFO, log_to_file=False):
-    """Shortcut to create a logger with optional file output."""
+def get_logger(
+    name: str, level: int = logging.INFO, log_to_file: bool = False
+) -> logging.Logger:
+    """Get a configured logger instance.
+
+    Get a logger by name with optional file output.
+
+    Args:
+        name (str): Logger identifier.
+        level (int): Minimum logging level.
+        log_to_file (bool): If True, write logs to a file.
+
+    Returns:
+        logging.Logger: Configured logger instance.
+    """
     return setup_logger(name, level, log_to_file)
 
 
@@ -69,85 +86,116 @@ class RLConfig:
     """Reinforcement learning hyperparameters and limits."""
 
     # Core RL hyperparameters
-    LEARNING_RATE = 0.2
-    MIN_LEARNING_RATE = 0.03
-    DISCOUNT_FACTOR = 0.98
-    MIN_DISCOUNT_FACTOR = 0.7
-    EXPLORATION_RATE = 0.3
-    MIN_EXPLORATION_RATE = 0.05
-    EXPLORATION_DECAY = 0.99
-    LEARNING_RATE_DECAY_BASE = 0.9995
-    LEARNING_RATE_DECAY_DENOM = 20000
+    LEARNING_RATE: float = 0.1
+    MIN_LEARNING_RATE: float = 0.01
+    DISCOUNT_FACTOR: float = 0.99
+    MIN_DISCOUNT_FACTOR: float = 0.9
+
+    # Exploration parameters
+    EXPLORATION_RATE: float = 1.0
+    MIN_EXPLORATION_RATE: float = 0.005
+    EXPLORATION_DECAY: float = 0.995
+    # Exponential decay schedule:
+    # epsilon = min + (max-min) * exp(-decay_rate * episode)
+    EXPLORATION_DECAY_RATE: float = 0.01
+
+    # Learning rate parameters
+    LEARNING_RATE_DECAY_BASE: float = 0.999
+    LEARNING_RATE_DECAY_DENOM: int = 10000
 
     # Episode limits
-    MAX_EPISODES = 300
-    MAX_STEPS_PER_EPISODE = 1000
+    MAX_EPISODES: int = 2000  # Fallback maximum if convergence not reached
+    MAX_STEPS_PER_EPISODE: int = 1500
+
+    # Early stopping parameters
+    ENABLE_EARLY_STOPPING: bool = True
+    MIN_EPISODES: int = 150
+    CONVERGENCE_WINDOW: int = 100
+    SUCCESS_RATE_THRESHOLD: float = 0.75
+    REWARD_IMPROVEMENT_THRESHOLD: float = 0.03
+    MAX_CONVERGENCE_ATTEMPTS: int = 3
+
+    # DQN-specific early stopping parameters
+    EVAL_INTERVAL: int = 20
+    EVAL_EPISODES: int = 10
+    MIN_EPSILON_DELTA: float = 0.5
+    PATIENCE: int = 5
+    LOSS_EPSILON: float = 0.01
 
     # Action persistence parameters
-    ACTION_PERSISTENCE_INITIAL = 3
-    ACTION_PERSISTENCE_MIN = 1
-    ACTION_PERSISTENCE_DECAY = 0.95
+    ACTION_PERSISTENCE_INITIAL: int = 3
+    ACTION_PERSISTENCE_MIN: int = 1
+    ACTION_PERSISTENCE_DECAY: float = 0.95
 
     # Target and reward configuration
-    TARGET_THRESHOLD = 0.15
-    TARGET_REACHED_REWARD = 50.0  # Reward for reaching the target
+    TARGET_THRESHOLD: float = 0.15
+    TARGET_REACHED_REWARD: float = 200.0  # Reward for reaching the target
 
     # Negative reward applied each step
-    STEP_PENALTY = 0.1
+    STEP_PENALTY: float = 0.02
+    # Reward shaping scale factor
+    REWARD_SHAPING_SCALE: float = 3.0
 
     # Collision penalty parameters
-    COLLISION_PENALTY = 5.0  # penalty for hitting obstacles
-    COLLISION_SENSOR_THRESHOLD = 3  # discrete sensor state indicating collision
+    COLLISION_PENALTY: float = 1.0  # Penalty for hitting obstacles
+    COLLISION_SENSOR_THRESHOLD: int = 3  # Discrete sensor state indicating collision
 
     # Protocol prefix for action commands to the slave controller
-    ACTION_COMMAND_PREFIX = "exec_action:"
+    ACTION_COMMAND_PREFIX: str = "exec_action:"
 
-    # Stuck detection and recovery
-    POSITION_MEMORY_SIZE = 20  # Number of previous positions to remember
-    POSITION_MEMORY_THRESHOLD = 0.05  # Distance threshold to consider positions similar
-    STUCK_POSITION_PENALTY = (
-        -2.0
-    )  # Penalty for revisiting positions where robot got stuck
+    # Discretization settings
+    DISTANCE_BINS: List[float] = [0.1, 0.25, 0.5, 0.75, 1.25, 2.0]
+    ANGLE_BINS: int = 8
 
-    # State blending
-    ENABLE_STATE_BLENDING = True
-    STATE_BLENDING_FACTOR = 0.3  # Weight given to nearby states
+    # Toggle between table-based Q-learning and DQN
+    USE_DQN: bool = False
 
-    # Dynamic approach strategies
-    PRECISION_APPROACH_DISTANCE = 0.8  # Distance to switch to precision approach
+    # DQN hyperparameters
+    BUFFER_SIZE: int = 50000
+    BATCH_SIZE: int = 128
+    GAMMA: float = 0.99
+    LR: float = 5e-4
+    TARGET_UPDATE: int = 500
+    EPS_START: float = 1.0
+    EPS_END: float = 0.05
+    EPS_DECAY: int = 20000
+
+    # --- Reward shaping ---
+    USE_POTENTIAL_SHAPING = True  # Set to True to enable potential-based reward shaping
 
 
 class RobotConfig:
     """Physical parameters and start/target positions for the robot."""
 
     # Physical parameters of the robot
-    MAX_SPEED = 10.0
-    TIME_STEP = 64
-    DEFAULT_POSITION = [0.0, 0.0, 0.0]
+    MAX_SPEED: float = 10.0
+    TIME_STEP: int = 64
+    DEFAULT_POSITION: List[float] = [0.0, 0.0, 0.0]
 
     # Positions used as targets during training
-    TARGET_POSITIONS = [[0.62, -0.61]]
+    TARGET_POSITIONS: List[List[float]] = [[0.62, -0.61]]
 
     # Initial positions for training episodes
-    START_POSITIONS = [[0.0, 0.0, 0.0]]
+    START_POSITIONS: List[List[float]] = [[0.0, 0.0, 0.0]]
 
 
 class SimulationConfig:
     """Simulation settings and logging options."""
 
     # Logging levels and output options
-    LOG_LEVEL_DRIVER = "INFO"
-    LOG_LEVEL_SLAVE = "INFO"
-    LOG_TO_FILE = True
+    LOG_LEVEL_DRIVER: str = "INFO"
+    LOG_LEVEL_SLAVE: str = "INFO"
+    LOG_TO_FILE: bool = True
+    DETAILED_LOG_FREQ: int = 75
 
     # Frequency for position updates
-    POSITION_UPDATE_FREQ = 5
+    POSITION_UPDATE_FREQ: int = 50
 
     # Detailed messaging configuration
-    ENABLE_DETAILED_LOGGING = True
+    ENABLE_DETAILED_LOGGING: bool = True
 
     # Timeout for goal seeking (seconds)
-    GOAL_SEEKING_TIMEOUT = 500
+    GOAL_SEEKING_TIMEOUT: int = 500
 
     # Stuck detection threshold
-    STUCK_THRESHOLD = 3
+    STUCK_THRESHOLD: int = 3

@@ -1,24 +1,24 @@
 """Provide robot control for obstacle avoidance, learning, and goal seeking."""
 
-from controller import AnsiCodes, Robot  # type: ignore
-import numpy as np
-import matplotlib.pyplot as plt
-import os
-import random
 import logging
 import math
-from collections import deque, defaultdict
+import os
+import random
+
+import matplotlib.pyplot as plt
+import numpy as np
+from controller import AnsiCodes, Robot  # type: ignore
+
 from common.config import (
+    DATA_DIR,
     RLConfig,
     RobotConfig,
     SimulationConfig,
     get_logger,
-    DATA_DIR,
-    Q_TABLE_PATH,
-    BEST_Q_TABLE_PATH,
 )
-from common.rl_utils import calculate_distance
-from q_learning_agent import QLearningAgent
+from common.rl_utils import calculate_distance, log_goal_reached
+from controllers.slave.dqn_agent import DQNAgent
+from controllers.slave.q_learning_agent import QLearningAgent
 
 # Configure module-level logger
 logger = get_logger(
@@ -38,28 +38,29 @@ class Enumerate(object):
 class Slave(Robot):
     """Control robot modes for obstacle avoidance, learning, and goal seeking."""
 
-    Mode = Enumerate("STOP MOVE_FORWARD AVOID_OBSTACLES TURN SEEK_GOAL LEARN")
+    Mode = Enumerate(
+        "STOP MOVE_FORWARD AVOID_OBSTACLES TURN SEEK_GOAL LEARN RANDOM_WALK"
+    )
     timeStep = RobotConfig.TIME_STEP
     maxSpeed = RobotConfig.MAX_SPEED
     mode = Mode.AVOID_OBSTACLES
-    motors = []
-    distanceSensors = []
 
     def boundSpeed(self, speed):
-        """Clamp speed to allowed range."""
-        return max(-self.maxSpeed, min(self.maxSpeed, speed))
+        """Clamp speed to the allowed range.
 
-    def normalize_angle(self, angle):
-        """Normalize angle to range [-pi, pi]."""
-        while angle > math.pi:
-            angle -= 2 * math.pi
-        while angle < -math.pi:
-            angle += 2 * math.pi
-        return angle
+        Args:
+            speed (float): Desired motor speed.
+
+        Returns:
+            float: Clamped speed within [-maxSpeed, maxSpeed].
+        """
+        return max(-self.maxSpeed, min(self.maxSpeed, speed))
 
     def __init__(self):
         """Initialize device interfaces, sensors, and Q-learning agent."""
         super(Slave, self).__init__()
+        self.motors = []
+        self.distanceSensors = []
 
         self.robot_name = self.getName()
         logger.info(f"Initializing robot: {self.robot_name}")
@@ -97,14 +98,9 @@ class Slave(Robot):
         self.position = [0, 0]
         self.orientation = 0.0
 
-        self.q_agent = QLearningAgent(
-            learning_rate=RLConfig.LEARNING_RATE,
-            min_learning_rate=RLConfig.MIN_LEARNING_RATE,
-            discount_factor=RLConfig.DISCOUNT_FACTOR,
-            min_discount_factor=RLConfig.MIN_DISCOUNT_FACTOR,
-            exploration_rate=RLConfig.EXPLORATION_RATE,
-            max_speed=self.maxSpeed,
-        )
+        # Instantiate RL agent
+        self.q_agent = None
+        self.set_training_mode("q_learning" if not RLConfig.USE_DQN else "dqn")
 
         self.learning_active = False
         self.target_position = None
@@ -119,12 +115,6 @@ class Slave(Robot):
         self.action_persistence_duration = RLConfig.ACTION_PERSISTENCE_INITIAL
         self.current_persistent_action = None
         self.rng = random.Random()
-
-        # Position history tracking
-        self.position_history = deque(maxlen=RLConfig.POSITION_MEMORY_SIZE)
-        self.stuck_positions = defaultdict(int)  # Position -> count of times stuck
-        self.recovery_attempts = 0
-        self.last_recovery_time = 0
 
         logger.info(f"Slave robot initialization complete: {self.robot_name}")
 
@@ -173,122 +163,94 @@ class Slave(Robot):
                     except ValueError:
                         logger.error("Invalid reward value")
 
-                elif message == "start_learning":
-                    self.mode = self.Mode.LEARN
-                    self.current_state = None
-                    logger.info("Entering learning mode")
-
-                elif message == "send q_table":
-                    self.send_q_table()
-
-                elif message == "plot_learning":
-                    self.plot_rewards()
-
-                elif message == "load_q_table":
-                    try:
-                        self.q_agent.load_q_table(Q_TABLE_PATH)
-                    except Exception as e:
-                        logger.error(f"Error loading Q-table: {e}")
-
                 elif message == "save_q_table":
                     try:
-                        self.q_agent.save_q_table(Q_TABLE_PATH)
-                        logger.info(f"Q-table saved to {Q_TABLE_PATH}")
+                        self.q_agent.save_q_table(self.q_agent.model_path)
                     except Exception as e:
                         logger.error(f"Error saving Q-table: {e}")
 
                 elif message == "save_best_q_table":
                     try:
-                        self.q_agent.save_q_table(BEST_Q_TABLE_PATH)
-                        logger.info(f"Best Q-table saved to {BEST_Q_TABLE_PATH}")
+                        # If we have target-reaching success, save as best Q-table
+                        if (
+                            self.mode == self.Mode.LEARN
+                            or self.mode == self.Mode.SEEK_GOAL
+                        ) and self.target_reached_reported:
+                            self.q_agent.save_q_table(self.q_agent.best_model_path)
+                            logger.info(
+                                f"Best Q-table saved to {self.q_agent.best_model_path}"
+                            )
+                        else:
+                            # Just save current as best if we don't have specific success criteria
+                            self.q_agent.save_q_table(self.q_agent.best_model_path)
+                            logger.info(
+                                f"Current Q-table saved as best to {self.q_agent.best_model_path}"
+                            )
                     except Exception as e:
                         logger.error(f"Error saving best Q-table: {e}")
 
+                elif message == "load_q_table":
+                    try:
+                        self.q_agent.load_q_table(self.q_agent.model_path)
+                    except Exception as e:
+                        logger.error(f"Error loading Q-table: {e}")
+
                 elif message == "load_best_q_table":
                     try:
-                        self.q_agent.load_q_table(BEST_Q_TABLE_PATH)
-                        logger.info(f"Best Q-table loaded from {BEST_Q_TABLE_PATH}")
+                        success = self.q_agent.load_q_table(
+                            self.q_agent.best_model_path
+                        )
+                        if success:
+                            logger.info(
+                                f"Best Q-table loaded from {self.q_agent.best_model_path}"
+                            )
+                        else:
+                            # Fall back to regular Q-table if best doesn't exist
+                            self.q_agent.load_q_table(self.q_agent.model_path)
+                            logger.info(
+                                "Best Q-table not found, loaded regular Q-table instead"
+                            )
                     except Exception as e:
                         logger.error(f"Error loading best Q-table: {e}")
 
                 elif message == "clear_q_table":
                     self.q_agent.q_table.clear()
-                    logger.info("Cleared Q‑table for new training")
+                    logger.info("Clearing Q‑table for new training...")
 
-                elif message == "reposition":
-                    # Adjust orientation when repositioning at mid-range distances
+                elif message.startswith("training_mode:"):
+                    mode = message[14:].strip()
+                    self.set_training_mode(mode)
 
-                    # Calculate direct vector to target
-                    if self.target_position and self.position:
-                        # Simple direct turn in a random direction to break symmetry
-                        turn_left = self.rng.random() > 0.5
+                elif message.startswith("set_eval_mode:"):
+                    try:
+                        eval_mode = message[14:] == "true"
+                        if hasattr(self.q_agent, "set_eval_mode"):
+                            self.q_agent.set_eval_mode(eval_mode)
+                            logger.info(f"Set evaluation mode: {eval_mode}")
+                    except Exception as e:
+                        logger.error(f"Error setting eval mode: {e}")
 
-                        # Execute a series of movements to reorient
-                        if turn_left:
-                            # Turn left
-                            self.motors[0].setVelocity(self.maxSpeed * 0.6)
-                            self.motors[1].setVelocity(-self.maxSpeed * 0.6)
-                        else:
-                            # Turn right
-                            self.motors[0].setVelocity(-self.maxSpeed * 0.6)
-                            self.motors[1].setVelocity(self.maxSpeed * 0.6)
+                elif message == "get_td_loss":
+                    try:
+                        if hasattr(self.q_agent, "get_average_loss"):
+                            avg_loss = self.q_agent.get_average_loss()
+                            self.emitter.send(f"td_loss:{avg_loss}".encode("utf-8"))
+                            logger.debug(f"Sent TD loss: {avg_loss}")
+                    except Exception as e:
+                        logger.error(f"Error getting TD loss: {e}")
 
-                        # Turn for a short duration
-                        turn_duration = 7
-                        for _ in range(turn_duration):
-                            if self.step(self.timeStep) == -1:
-                                break
-
-                        # Then move forward a bit
-                        self.motors[0].setVelocity(self.maxSpeed * 0.7)
-                        self.motors[1].setVelocity(self.maxSpeed * 0.7)
-
-                        for _ in range(8):
-                            if self.step(self.timeStep) == -1:
-                                break
-
-                        # Return to goal seeking
-                        if self.mode == self.Mode.SEEK_GOAL:
-                            logger.info("Goal seeking in progress")
-                        else:
+                elif message.startswith("eval:"):
+                    coords = message[5:].split(",")
+                    if len(coords) == 2:
+                        try:
+                            x = float(coords[0])
+                            y = float(coords[1])
+                            self.target_position = [x, y]
                             self.mode = self.Mode.SEEK_GOAL
-                    else:
-                        # Fallback if no position data
-                        logger.info("Repositioning failed, no position data")
-
-                elif message == "randomize":
-                    # Randomize behavior to recover from a stuck state
-
-                    # Reset persistence counter
-                    self.action_persistence = 0
-                    self.current_persistent_action = None
-
-                    # Reverse for a short distance
-                    self.motors[0].setVelocity(-self.maxSpeed * 0.7)
-                    self.motors[1].setVelocity(-self.maxSpeed * 0.7)
-                    for _ in range(10):
-                        if self.step(self.timeStep) == -1:
-                            break
-
-                    # Rotate randomly to explore new paths
-                    if self.rng.random() < 0.5:
-                        # Turn left
-                        self.motors[0].setVelocity(self.maxSpeed * 0.8)
-                        self.motors[1].setVelocity(-self.maxSpeed * 0.8)
-                    else:
-                        # Turn right
-                        self.motors[0].setVelocity(-self.maxSpeed * 0.8)
-                        self.motors[1].setVelocity(self.maxSpeed * 0.8)
-
-                    for _ in range(self.rng.randint(8, 15)):  # Random turn duration
-                        if self.step(self.timeStep) == -1:
-                            break
-
-                    # Return to goal seeking if that was the previous mode
-                    if self.mode == self.Mode.SEEK_GOAL:
-                        self.mode = self.Mode.SEEK_GOAL
-                    else:
-                        self.mode = self.Mode.AVOID_OBSTACLES
+                            self.learning_active = False
+                            logger.info(f"Evaluation episode for target at ({x}, {y})")
+                        except ValueError:
+                            logger.error("Invalid coordinates for evaluation target")
 
                 else:
                     if message.startswith(RLConfig.ACTION_COMMAND_PREFIX):
@@ -365,39 +327,28 @@ class Slave(Robot):
                         except ValueError:
                             logger.error("Invalid persistence value")
 
-                    elif message == "stop learn":
-                        self.learning_active = False
-                        self.mode = self.Mode.AVOID_OBSTACLES
-                        logger.info("Learning mode stopped")
-                    elif message == "learn":
-                        self.learning_active = True
-                        self.mode = self.Mode.LEARN
-                        if (
-                            not hasattr(self, "learn_mode_reported")
-                            or not self.learn_mode_reported
-                        ):
-                            logger.info("Learning mode activated")
-                            self.learn_mode_reported = True
                     elif message == "avoid obstacles":
                         self.mode = self.Mode.AVOID_OBSTACLES
                     elif message == "move forward":
                         self.mode = self.Mode.MOVE_FORWARD
                     elif message == "stop":
-                        # Check if we're near the target before stopping
                         if (
                             self.mode == self.Mode.SEEK_GOAL
                             and self.target_position
-                            and calculate_distance(self.position, self.target_position)
-                            < RLConfig.TARGET_THRESHOLD
-                            and not self.target_reached_reported
+                            and log_goal_reached(
+                                calculate_distance(self.position, self.target_position),
+                                "SEEK_GOAL",
+                                logger,
+                            )
                         ):
-                            logger.info("🎯 Target reached in SEEK_GOAL mode!")
                             self.target_reached_reported = True
 
                         self.mode = self.Mode.STOP
                         self.handle_reset()
                     elif message == "turn":
                         self.mode = self.Mode.TURN
+                    elif message == "random walk":
+                        self.mode = self.Mode.RANDOM_WALK
 
             delta = (
                 self.distanceSensors[0].getValue() - self.distanceSensors[1].getValue()
@@ -436,86 +387,8 @@ class Slave(Robot):
                 current_distance = calculate_distance(
                     self.position, self.target_position
                 )
-
-                # Enable target detection after a short delay to prevent false detection at initialization
-                if hasattr(self, "goal_seek_start_time") and not getattr(
-                    self, "allow_target_detection", True
-                ):
-                    elapsed_time = self.getTime() - self.goal_seek_start_time
-                    if elapsed_time > 1.0:
-                        self.allow_target_detection = True
-                        logger.debug(
-                            "Target detection enabled after initialization delay"
-                        )
-
-                # Check if we've reached the target
-                if current_distance < RLConfig.TARGET_THRESHOLD and getattr(
-                    self, "allow_target_detection", True
-                ):
-                    if not self.target_reached_reported:
-                        logger.info("🎯 Target reached in SEEK_GOAL mode!")
-                        self.target_reached_reported = True
-                    else:
-                        speeds = [0.0, 0.0]
-                else:
-                    if 0.45 <= current_distance <= 0.55:
-                        # Handle mid-range distances where the robot may stall
-                        if not hasattr(self, "medium_distance_counter"):
-                            self.medium_distance_counter = 0
-
-                        self.medium_distance_counter += 1
-
-                        # After being stuck at this distance for some time, try a more direct approach
-                        if self.medium_distance_counter > 50:
-                            # Calculate direct vector to target
-                            dx = self.target_position[0] - self.position[0]
-                            dy = self.target_position[1] - self.position[1]
-
-                            # Apply direct vector movement for challenging mid-range positions
-                            if abs(dx) > abs(dy):
-                                # Move primarily along x-axis
-                                if dx > 0:
-                                    speeds = [self.maxSpeed * 0.7, self.maxSpeed * 0.7]
-                                else:
-                                    speeds = [
-                                        -self.maxSpeed * 0.7,
-                                        -self.maxSpeed * 0.7,
-                                    ]
-                            else:
-                                # Move primarily along y-axis
-                                if dy > 0:
-                                    speeds = [self.maxSpeed * 0.7, self.maxSpeed * 0.7]
-                                else:
-                                    speeds = [
-                                        -self.maxSpeed * 0.7,
-                                        -self.maxSpeed * 0.7,
-                                    ]
-
-                            # Reset counter after applying direct movement
-                            if self.medium_distance_counter > 70:
-                                logger.debug(
-                                    f"Breaking out of difficult distance region ({current_distance:.2f})"
-                                )
-                                self.medium_distance_counter = 0
-                        else:
-                            # Standard Q-learning based movement
-                            action = self.q_agent.choose_best_action(
-                                state, current_distance
-                            )
-                            speeds = self.q_agent.execute_action(action, state)
-                    else:
-                        # Reset counter when not in the difficult distance range
-                        if hasattr(self, "medium_distance_counter"):
-                            self.medium_distance_counter = 0
-
-                        # Standard Q-learning based movement
-                        action = self.q_agent.choose_best_action(
-                            state, current_distance
-                        )
-                        speeds = self.q_agent.execute_action(action, state)
-
-                # Update position tracking for stuck detection
-                self.update_position_history()
+                action = self.q_agent.choose_best_action(state, current_distance)
+                speeds = self.q_agent.execute_action(action, state)
 
             elif self.mode == self.Mode.LEARN:
                 position = None
@@ -551,6 +424,12 @@ class Slave(Robot):
                     speeds = self.q_agent.execute_action(action, self.current_state)
                     self.last_action = action
 
+            elif self.mode == self.Mode.RANDOM_WALK:
+                speeds = [
+                    self.boundSpeed(self.rng.uniform(-self.maxSpeed, self.maxSpeed)),
+                    self.boundSpeed(self.rng.uniform(-self.maxSpeed, self.maxSpeed)),
+                ]
+
             self.motors[0].setVelocity(speeds[0])
             self.motors[1].setVelocity(speeds[1])
 
@@ -559,11 +438,15 @@ class Slave(Robot):
                     self.save_learning_progress()
                     self.plot_rewards()
                 logger.info("Robot controller exiting")
-                self.q_agent.save_q_table(Q_TABLE_PATH)
+                self.q_agent.save_q_table(self.q_agent.model_path)
                 break
 
     def get_discrete_state(self):
-        """Return discrete state tuple for RL agent."""
+        """Get the discrete state tuple for the RL agent.
+
+        Returns:
+            Optional[Tuple]: Discrete state tuple or None if invalid input.
+        """
         if not self.position or not self.target_position:
             return None
         left_wheel_velocity = self.motors[0].getVelocity()
@@ -571,18 +454,6 @@ class Slave(Robot):
         wheel_velocities = [left_wheel_velocity, right_wheel_velocity]
         left_sensor_value = self.distanceSensors[0].getValue()
         right_sensor_value = self.distanceSensors[1].getValue()
-
-        # Check if current position is in stuck history
-        current_position_key = self.get_position_key(self.position)
-        if (
-            current_position_key in self.stuck_positions
-            and self.stuck_positions[current_position_key] > 2
-        ):
-            # Apply penalty in state to avoid revisiting stuck positions
-            stuck_penalty = min(self.stuck_positions[current_position_key] * 0.5, 3.0)
-            logger.debug(
-                f"Position {current_position_key} has stuck penalty {stuck_penalty}"
-            )
 
         return self.q_agent.get_discrete_state(
             self.position,
@@ -593,170 +464,8 @@ class Slave(Robot):
             wheel_velocities,
         )
 
-    def get_position_key(self, position):
-        """Convert position to grid cell key."""
-        grid_size = RLConfig.POSITION_MEMORY_THRESHOLD
-        return (round(position[0] / grid_size), round(position[1] / grid_size))
-
-    def update_position_history(self):
-        """Track position history and detect stuck patterns."""
-        if not self.position:
-            return
-
-        current_key = self.get_position_key(self.position)
-
-        # Add to position history
-        self.position_history.append(current_key)
-
-        # Check for repetitive patterns
-        if len(self.position_history) >= 10:
-            recent = list(self.position_history)[-10:]
-            unique_positions = set(recent)
-
-            # If we're cycling through the same few positions, mark them as stuck points
-            if len(unique_positions) <= 3:
-                for pos in unique_positions:
-                    self.stuck_positions[pos] += 1
-                    if (
-                        self.stuck_positions[pos] >= 3
-                        and self.getTime() - self.last_recovery_time > 5.0
-                    ):
-                        intensity = min(self.stuck_positions[pos] * 0.2, 1.0)
-                        self.initiate_recovery(intensity)
-                        self.last_recovery_time = self.getTime()
-                        break
-
-    def initiate_recovery(self, intensity=0.5):
-        """Execute recovery strategies based on stuck history."""
-        self.recovery_attempts += 1
-
-        if self.recovery_attempts < 3:
-            self.execute_simple_avoidance(intensity)
-        elif self.recovery_attempts < 5:
-            self.execute_perpendicular_movement(intensity)
-        else:
-            self.execute_random_exploration(intensity)
-            # Reset recovery counter after random exploration
-            if self.recovery_attempts >= 7:
-                self.recovery_attempts = 0
-                # Clear some stuck history to give a fresh start
-                self.stuck_positions.clear()
-
-    def execute_simple_avoidance(self, intensity):
-        """Perform simple avoidance maneuver."""
-        # Back up
-        self.motors[0].setVelocity(-self.maxSpeed * 0.7 * intensity)
-        self.motors[1].setVelocity(-self.maxSpeed * 0.7 * intensity)
-        for _ in range(int(7 * intensity)):
-            if self.step(self.timeStep) == -1:
-                break
-
-        # Turn in the less obstructed direction
-        if self.distanceSensors[0].getValue() > self.distanceSensors[1].getValue():
-            # Turn right
-            self.motors[0].setVelocity(-self.maxSpeed * 0.7 * intensity)
-            self.motors[1].setVelocity(self.maxSpeed * 0.7 * intensity)
-        else:
-            # Turn left
-            self.motors[0].setVelocity(self.maxSpeed * 0.7 * intensity)
-            self.motors[1].setVelocity(-self.maxSpeed * 0.7 * intensity)
-
-        for _ in range(int(10 * intensity)):
-            if self.step(self.timeStep) == -1:
-                break
-
-    def execute_perpendicular_movement(self, intensity):
-        """Perform perpendicular movement relative to target."""
-        if not self.target_position or not self.position:
-            self.execute_random_exploration(intensity)
-            return
-
-        # Calculate vector to target
-        dx = self.target_position[0] - self.position[0]
-        dy = self.target_position[1] - self.position[1]
-
-        # Calculate perpendicular direction (90 degrees rotation)
-        perp_dx = -dy
-        perp_dy = dx
-
-        # Normalize
-        magnitude = math.sqrt(perp_dx**2 + perp_dy**2)
-        if magnitude > 0:
-            perp_dx /= magnitude
-            perp_dy /= magnitude
-
-        # Determine which perpendicular direction to take (alternate based on attempts)
-        if self.recovery_attempts % 2 == 0:
-            perp_dx = -perp_dx
-            perp_dy = -perp_dy
-
-        # First back up a bit
-        self.motors[0].setVelocity(-self.maxSpeed * 0.6 * intensity)
-        self.motors[1].setVelocity(-self.maxSpeed * 0.6 * intensity)
-        for _ in range(int(5 * intensity)):
-            if self.step(self.timeStep) == -1:
-                break
-
-        # Then turn perpendicular
-        angle_to_perp = math.atan2(perp_dy, perp_dx)
-
-        # Simplified turn to approximate angle
-        if angle_to_perp > 0:
-            # Turn left
-            self.motors[0].setVelocity(self.maxSpeed * 0.7 * intensity)
-            self.motors[1].setVelocity(-self.maxSpeed * 0.7 * intensity)
-        else:
-            # Turn right
-            self.motors[0].setVelocity(-self.maxSpeed * 0.7 * intensity)
-            self.motors[1].setVelocity(self.maxSpeed * 0.7 * intensity)
-
-        for _ in range(int(8 * intensity)):
-            if self.step(self.timeStep) == -1:
-                break
-
-        # Move forward in new direction
-        self.motors[0].setVelocity(self.maxSpeed * 0.8 * intensity)
-        self.motors[1].setVelocity(self.maxSpeed * 0.8 * intensity)
-        for _ in range(int(12 * intensity)):
-            if self.step(self.timeStep) == -1:
-                break
-
-    def execute_random_exploration(self, intensity):
-        """Perform random exploration to escape stuck situations."""
-        # Backup in a random direction
-        left_speed = -self.maxSpeed * (0.6 + self.rng.random() * 0.4) * intensity
-        right_speed = -self.maxSpeed * (0.6 + self.rng.random() * 0.4) * intensity
-
-        self.motors[0].setVelocity(left_speed)
-        self.motors[1].setVelocity(right_speed)
-
-        for _ in range(int(10 * intensity)):
-            if self.step(self.timeStep) == -1:
-                break
-
-        # Make a random turn
-        if self.rng.random() < 0.5:
-            self.motors[0].setVelocity(self.maxSpeed * intensity)
-            self.motors[1].setVelocity(-self.maxSpeed * intensity)
-        else:
-            self.motors[0].setVelocity(-self.maxSpeed * intensity)
-            self.motors[1].setVelocity(self.maxSpeed * intensity)
-
-        turn_duration = self.rng.randint(8, 15)
-        for _ in range(int(turn_duration * intensity)):
-            if self.step(self.timeStep) == -1:
-                break
-
-        # Move forward
-        self.motors[0].setVelocity(self.maxSpeed * intensity)
-        self.motors[1].setVelocity(self.maxSpeed * intensity)
-
-        for _ in range(int(15 * intensity)):
-            if self.step(self.timeStep) == -1:
-                break
-
     def save_learning_progress(self):
-        """Save learning progress to robot custom data."""
+        """Save the learning progress to the robot's custom data."""
         if hasattr(self, "q_agent") and self.q_agent.q_table:
             data = f"learning_active:{self.learning_active},exploration:{self.q_agent.exploration_rate}"
             try:
@@ -765,18 +474,8 @@ class Slave(Robot):
             except Exception as e:
                 logger.error(f"Could not save data: {e}")
 
-    def send_q_table(self):
-        """Log current Q-table size."""
-        if not hasattr(self, "emitter"):
-            return
-        try:
-            q_table_size = len(self.q_agent.q_table)
-            logger.info(f"Q-table information: {q_table_size} states")
-        except Exception as e:
-            logger.error(f"Error with Q-table: {e}")
-
     def plot_rewards(self):
-        """Plot and save reward history."""
+        """Plot and save the reward history."""
         if not self.rewards_history:
             logger.warning("No rewards to plot")
             return
@@ -813,7 +512,7 @@ class Slave(Robot):
         plt.close()
 
     def handle_reset(self):
-        """Stop motors and reset internal state."""
+        """Stop the motors and reset the internal state."""
         self.motors[0].setVelocity(0.0)
         self.motors[1].setVelocity(0.0)
         self.orientation = 0.0
@@ -822,6 +521,33 @@ class Slave(Robot):
         for _ in range(3):
             if self.step(self.timeStep) == -1:
                 break
+
+    def set_training_mode(self, mode):
+        """Set the training mode to Q-Learning or DQN.
+
+        Args:
+            mode (str): The training mode, either 'q_learning' or 'dqn'.
+        """
+        if mode == "q_learning":
+            self.q_agent = QLearningAgent(
+                learning_rate=RLConfig.LEARNING_RATE,
+                min_learning_rate=RLConfig.MIN_LEARNING_RATE,
+                discount_factor=RLConfig.DISCOUNT_FACTOR,
+                min_discount_factor=RLConfig.MIN_DISCOUNT_FACTOR,
+                exploration_rate=RLConfig.EXPLORATION_RATE,
+                max_speed=self.maxSpeed,
+            )
+            logger.info("Training mode set to Q-Learning.")
+        elif mode == "dqn":
+            self.q_agent = DQNAgent(
+                state_dim=5,
+                action_dim=5,
+                device="cpu",
+                max_speed=self.maxSpeed,
+            )
+            logger.info("Training mode set to DQN.")
+        else:
+            logger.error(f"Invalid training mode: {mode}")
 
 
 if __name__ == "__main__":
