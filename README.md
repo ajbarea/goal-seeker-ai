@@ -76,7 +76,7 @@ Training runs episodes until early stopping or `RLConfig.MAX_EPISODES`, then swi
 
 **Reward.** Reaching the goal (within 0.15 m) pays 200. Otherwise the reward is the step's progress, previous distance − γ × current distance, scaled by the most the robot can move in one step, clipped to ±1 and multiplied by 3, plus 0.1 when that progress is positive, minus a 0.02 step penalty. `calculate_reward` can also subtract a 1.0 collision penalty from sensor readings, but the supervisor does not pass them, so training runs without it. With shaping on, F is added with γ = `GAMMA` (0.99) for the DQN and `DISCOUNT_FACTOR` (0.99) for Q-learning, whose agent then adapts its own discount per state.
 
-**DQN settings** (`RLConfig`): replay buffer 50,000, batch 128, γ 0.99, Adam at 5e-4, target network copied every 500 steps, epsilon from 1.0 to 0.05 over 20,000 steps, gradients clipped at norm 10. Every 20 episodes it runs 10 greedy evaluation episodes. After every episode it compares the latest evaluation average with its best and stops after 5 checks in a row without a new best; the average changes only at an evaluation, so training ends 5 episodes after an evaluation that did not improve.
+**DQN settings** (`RLConfig`): replay buffer 50,000, batch 128, γ 0.99, Adam at 5e-4, target network copied every 500 steps, epsilon from 1.0 to 0.05 over 20,000 steps, gradients clipped at norm 10. Every 20 episodes it runs 10 greedy evaluation episodes. From episode 150, after every episode it compares the latest evaluation average with its best: while fewer than 20% of evaluation episodes score above 150 it keeps training, and otherwise it stops after 5 checks in a row without a new best. The average changes only at an evaluation, so training ends about 5 episodes after the first evaluation that clears the 20% bar.
 
 ## Tests
 
@@ -85,7 +85,7 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-The suite covers what runs without the simulator: the state encoding, the reward and its shaping term, the supervisor's episode logic against a stand-in driver, and both agents on CPU (Q-table updates, DQN training on a toy task, checkpoint round trips). CI runs it on pushes and pull requests to main.
+The suite covers what runs without the simulator: the state encoding, the reward and its shaping term, the supervisor's training and evaluation episodes against a stand-in driver, the robot controller against a stand-in Webots `controller` module, and both agents on CPU (Q-table updates, DQN training on a toy task, checkpoint round trips). CI runs it on pushes and pull requests to main.
 
 ## Credits
 

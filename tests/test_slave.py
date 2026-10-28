@@ -66,6 +66,8 @@ def slave_module(monkeypatch):
     monkeypatch.delitem(sys.modules, "controllers.slave.slave", raising=False)
     import controllers.slave.slave as slave
 
+    # Drop this copy, built against the fake module, when the test ends.
+    monkeypatch.setitem(sys.modules, "controllers.slave.slave", slave)
     return slave
 
 
@@ -75,12 +77,16 @@ def test_each_agent_saves_to_its_own_file(slave_module, monkeypatch, tmp_path):
 
     monkeypatch.setattr(QLearningAgent, "model_path", str(tmp_path / "q.pkl"))
     monkeypatch.setattr(DQNAgent, "model_path", str(tmp_path / "dqn.pt"))
-    FakeRobot.messages = [
-        "training_mode:dqn",
-        "save_q_table",
-        "training_mode:q_learning",
-        "save_q_table",
-    ]
+    monkeypatch.setattr(
+        FakeRobot,
+        "messages",
+        [
+            "training_mode:dqn",
+            "save_q_table",
+            "training_mode:q_learning",
+            "save_q_table",
+        ],
+    )
     slave_module.Slave().run()
 
     assert QLearningAgent().load_q_table(str(tmp_path / "q.pkl"))

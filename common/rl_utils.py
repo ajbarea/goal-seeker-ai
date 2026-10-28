@@ -141,8 +141,8 @@ def calculate_reward(
     """Compute reward from progress, step penalty, collisions and optional shaping.
 
     With ``use_potential_shaping``, adds F = γΦ(s') − Φ(s) with Φ = −distance to
-    the target (Ng, Harada and Russell, 1999), which leaves the optimal policy
-    unchanged.
+    the target (Ng, Harada and Russell, 1999). The goal step returns its reward
+    without F.
 
     Args:
         current_position (List[float]): Current [x, y] position.
