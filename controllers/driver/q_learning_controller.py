@@ -122,7 +122,7 @@ class QLearningController:
         Returns:
             float: Calculated reward value.
         """
-        # Shaping must use the learner's own discount factor.
+        # The DQN's gamma under DQN; Q-learning starts from DISCOUNT_FACTOR and adapts it.
         discount = RLConfig.GAMMA if self.using_dqn else RLConfig.DISCOUNT_FACTOR
         reward = calculate_reward(
             current_position[:2],

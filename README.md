@@ -9,7 +9,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12%E2%80%933.14-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
-[![Webots](https://img.shields.io/badge/Webots-R2025a-blueviolet?style=flat-square)](https://cyberbotics.com)
+[![Webots](https://img.shields.io/badge/Webots-R2023b%2B-blueviolet?style=flat-square)](https://cyberbotics.com)
 [![CI](https://github.com/ajbarea/goal-seeker-ai/actions/workflows/python-app.yml/badge.svg)](https://github.com/ajbarea/goal-seeker-ai/actions/workflows/python-app.yml)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=ajbarea_goal-seeker-ai&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ajbarea_goal-seeker-ai)
 
@@ -23,7 +23,7 @@ Two learners share one robot, one state encoding and one reward:
 
 - **Tabular Q-learning** (`controllers/slave/q_learning_agent.py`): a Q-table over discretized states, with a learning rate and discount factor that adapt to the distance from the goal.
 - **Deep Q-Network** (`controllers/slave/dqn_agent.py`): a PyTorch network (256, 256 and 128 hidden units) trained from a replay buffer as a Double DQN, with a target network, epsilon-greedy exploration, a greedy evaluation mode and early stopping on evaluation reward.
-- **Potential-based reward shaping** (Ivan Rojas, `calculate_potential` in `common/rl_utils.py`): adds F = γΦ(s′) − Φ(s), with Φ = −distance to the goal, on top of the progress reward. Shaping of this form leaves the optimal policy unchanged ([Ng, Harada and Russell, 1999](https://people.eecs.berkeley.edu/~pabbeel/cs287-fa09/readings/NgHaradaRussell-shaping-ICML1999.pdf)). `RLConfig.USE_POTENTIAL_SHAPING` turns it on or off.
+- **Potential-based reward shaping** (Ivan Rojas, `calculate_potential` in `common/rl_utils.py`): adds F = γΦ(s′) − Φ(s), with Φ = −distance to the goal, on top of the progress reward, the form of shaping from [Ng, Harada and Russell (1999)](https://people.eecs.berkeley.edu/~pabbeel/cs287-fa09/readings/NgHaradaRussell-shaping-ICML1999.pdf). Their policy-invariance result assumes F on every transition, terminal steps included; here the goal step pays 200 without it. `RLConfig.USE_POTENTIAL_SHAPING` turns it on or off.
 
 The **driver** (`controllers/driver/`) is a Webots supervisor: it places the robot and the target, runs episodes, computes each step's reward and sends it to the robot. The **slave** (`controllers/slave/`) reads its sensors, encodes the state, chooses an action and updates whichever agent is active.
 
@@ -49,7 +49,7 @@ goal-seeker-ai/
 
 ## Run it
 
-1. Install [Webots](https://cyberbotics.com) (the project file is R2025a) and [uv](https://docs.astral.sh/uv/).
+1. Install [Webots](https://cyberbotics.com) (the world is saved in R2023b, the project file in R2025a) and [uv](https://docs.astral.sh/uv/).
 2. `uv sync` creates `.venv` with NumPy, Matplotlib and CPU PyTorch.
 3. Point Webots at that interpreter: Preferences, General, Python command, set to the absolute path of `.venv/bin/python` (`.venv\Scripts\python.exe` on Windows). Webots otherwise runs the first `python` on `PATH` ([Webots: Using Python](https://cyberbotics.com/doc/guide/using-python)).
 4. Open `worlds/search-and-rescue.wbt`. The robot starts in obstacle-avoidance mode; click the 3D view and use the keys below.
@@ -74,9 +74,9 @@ Training runs episodes until early stopping or `RLConfig.MAX_EPISODES`, then swi
 
 **Actions.** Forward, turn left, turn right, backward, stop.
 
-**Reward.** Reaching the goal (within 0.15 m) pays 200. Otherwise the reward is the step's progress, previous distance − γ × current distance, scaled by the most the robot can move in one step, clipped to ±1 and multiplied by 3, plus 0.1 when that progress is positive, minus a 0.02 step penalty and a 1.0 collision penalty. With shaping on, F is added, using the γ of the agent that is training.
+**Reward.** Reaching the goal (within 0.15 m) pays 200. Otherwise the reward is the step's progress, previous distance − γ × current distance, scaled by the most the robot can move in one step, clipped to ±1 and multiplied by 3, plus 0.1 when that progress is positive, minus a 0.02 step penalty. `calculate_reward` can also subtract a 1.0 collision penalty from sensor readings, but the supervisor does not pass them, so training runs without it. With shaping on, F is added with γ = `GAMMA` (0.99) for the DQN and `DISCOUNT_FACTOR` (0.99) for Q-learning, whose agent then adapts its own discount per state.
 
-**DQN settings** (`RLConfig`): replay buffer 50,000, batch 128, γ 0.99, Adam at 5e-4, target network copied every 500 steps, epsilon from 1.0 to 0.05 over 20,000 steps, gradients clipped at norm 10. Every 20 episodes it runs 10 greedy evaluation episodes, and it stops after 5 evaluations in a row without improvement, or after 2 when the TD loss has also plateaued.
+**DQN settings** (`RLConfig`): replay buffer 50,000, batch 128, γ 0.99, Adam at 5e-4, target network copied every 500 steps, epsilon from 1.0 to 0.05 over 20,000 steps, gradients clipped at norm 10. Every 20 episodes it runs 10 greedy evaluation episodes. After every episode it compares the latest evaluation average with its best and stops after 5 checks in a row without a new best; the average changes only at an evaluation, so training ends 5 episodes after an evaluation that did not improve.
 
 ## Tests
 
@@ -85,11 +85,11 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-The suite covers what runs without the simulator: the state encoding, the reward and its shaping term, the supervisor's episode logic against a stand-in driver, and both agents on CPU (Q-table updates, DQN training on a toy task, checkpoint round trips). CI runs it on every push and pull request.
+The suite covers what runs without the simulator: the state encoding, the reward and its shaping term, the supervisor's episode logic against a stand-in driver, and both agents on CPU (Q-table updates, DQN training on a toy task, checkpoint round trips). CI runs it on pushes and pull requests to main.
 
 ## Credits
 
-AJ Barea wrote the controllers, both agents and the reward. Ivan Rojas added potential-based reward shaping and the training run in `data/training_results.png`.
+AJ Barea wrote the controllers, both agents and the reward. Ivan Rojas added potential-based reward shaping and the training run in `data/training_results.png`, made with his shaping over the earlier reward.
 
 ## License
 

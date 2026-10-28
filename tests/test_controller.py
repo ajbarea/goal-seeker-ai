@@ -91,3 +91,38 @@ def test_training_step_sends_the_reward_to_the_robot(controller):
     start = controller.start_positions[controller.current_start_index]
     controller.manage_training_step(list(start[:2]) + [0.0])
     assert any(m.startswith("reward:") for m in controller.driver.emitter.sent)
+
+
+class FakeField:
+    def __init__(self, position):
+        self.position = list(position)
+
+    def getSFVec3f(self):
+        return list(self.position)
+
+    def setSFVec3f(self, value):
+        self.position = list(value)
+
+
+def test_evaluation_episodes_start_shaping_from_the_start_position(
+    controller, monkeypatch
+):
+    import controllers.driver.q_learning_controller as qlc
+
+    seen = []
+    real = qlc.calculate_reward
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("previous_position"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(qlc, "calculate_reward", spy)
+    target = controller.target_positions[controller.current_target_index]
+    controller.driver.translation_field = FakeField(list(target[:2]) + [0.0])
+    controller.previous_position = [9.0, 9.0]  # left over from training
+
+    controller.run_evaluation_episodes()
+
+    start = controller.start_positions[controller.current_start_index]
+    assert seen, "evaluation computed no reward"
+    assert all(p == start[:2] for p in seen)
