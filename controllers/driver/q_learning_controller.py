@@ -56,6 +56,7 @@ class QLearningController:
 
         # State tracking for reward calculation
         self.previous_distance_to_target: Optional[float] = None
+        self.previous_position: Optional[List[float]] = None
 
         # Control state for goal-seeking phase
         self.goal_seeking_active: bool = False
@@ -112,7 +113,7 @@ class QLearningController:
         self.episode_step = 0
 
     def calculate_reward(self, current_position: List[float]) -> float:
-        """Calculate reward using distance progress and penalties.
+        """Calculate reward using distance progress, penalties and optional shaping.
 
         Args:
             current_position (List[float]): Current [x, y] position of the robot.
@@ -120,18 +121,21 @@ class QLearningController:
         Returns:
             float: Calculated reward value.
         """
+        discount = RLConfig.DISCOUNT_FACTOR
         reward = calculate_reward(
             current_position[:2],
             self.driver.target_position,
             self.previous_distance_to_target,
             RLConfig.TARGET_THRESHOLD,
+            previous_position=self.previous_position,
+            discount_factor=discount,
+            use_potential_shaping=RLConfig.USE_POTENTIAL_SHAPING,
         )
-
         current_distance = calculate_distance(
             current_position[:2], self.driver.target_position
         )
         self.previous_distance_to_target = current_distance
-
+        self.previous_position = current_position[:2]
         return reward
 
     def manage_training_step(self, position: List[float]) -> None:

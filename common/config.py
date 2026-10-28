@@ -157,6 +157,9 @@ class RLConfig:
     EPS_END: float = 0.05
     EPS_DECAY: int = 20000
 
+    # --- Reward shaping ---
+    USE_POTENTIAL_SHAPING = True  # Set to True to enable potential-based reward shaping
+
 
 class RobotConfig:
     """Physical parameters and start/target positions for the robot."""

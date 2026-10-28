@@ -116,6 +116,14 @@ def discretize_velocity(wheel_velocities: List[float]) -> int:
         return 0
 
 
+def calculate_potential(
+    position: List[float],
+    target_position: List[float],
+) -> float:
+    """Potential function for reward shaping: negative distance to goal."""
+    return -calculate_distance(position[:2], target_position)
+
+
 def calculate_reward(
     current_position: List[float],
     target_position: List[float],
@@ -123,8 +131,15 @@ def calculate_reward(
     target_threshold: float = 0.1,
     left_sensor: Optional[float] = None,
     right_sensor: Optional[float] = None,
+    previous_position: Optional[List[float]] = None,
+    discount_factor: Optional[float] = None,
+    use_potential_shaping: bool = False,
 ) -> float:
-    """Compute reward from progress, step penalty, and collisions.
+    """Compute reward from progress, step penalty, collisions and optional shaping.
+
+    With ``use_potential_shaping``, adds F = γΦ(s') − Φ(s) with Φ = −distance to
+    the target (Ng, Harada and Russell, 1999), which leaves the optimal policy
+    unchanged.
 
     Args:
         current_position (List[float]): Current [x, y] position.
@@ -133,6 +148,9 @@ def calculate_reward(
         target_threshold (float): Distance threshold for success.
         left_sensor (Optional[float]): Left sensor reading.
         right_sensor (Optional[float]): Right sensor reading.
+        previous_position (Optional[List[float]]): Previous [x, y] position, for shaping.
+        discount_factor (Optional[float]): The learner's γ, for shaping.
+        use_potential_shaping (bool): Add the potential-based shaping term.
 
     Returns:
         float: Calculated reward value.
@@ -143,25 +161,25 @@ def calculate_reward(
         return RLConfig.TARGET_REACHED_REWARD
 
     if previous_distance is None:
-        return 0.0
+        base_reward = 0.0
+    else:
+        # Progress reward: previous_distance - γ * current_distance
+        shaping_delta = previous_distance - RLConfig.DISCOUNT_FACTOR * current_distance
+        # max possible movement per step: speed * timestep (ms->s)
+        max_delta = RobotConfig.MAX_SPEED * (RobotConfig.TIME_STEP / 1000.0)
+        if max_delta <= 0:
+            max_delta = 1.0
+        normalized = shaping_delta / max_delta
 
-    # Potential-based shaping reward: previous_distance - γ * current_distance
-    shaping_delta = previous_distance - RLConfig.DISCOUNT_FACTOR * current_distance
-    # max possible movement per step: speed * timestep (ms->s)
-    max_delta = RobotConfig.MAX_SPEED * (RobotConfig.TIME_STEP / 1000.0)
-    if max_delta <= 0:
-        max_delta = 1.0
-    normalized = shaping_delta / max_delta
+        # Scale up the reward for making progress
+        base_reward = max(-1.0, min(1.0, normalized)) * RLConfig.REWARD_SHAPING_SCALE
 
-    # Scale up the reward for making progress
-    reward = max(-1.0, min(1.0, normalized)) * RLConfig.REWARD_SHAPING_SCALE
+        # Add a small positive reward for being on the right track (heading toward goal)
+        if shaping_delta > 0:
+            base_reward += 0.1
 
-    # Add a small positive reward for being on the right track (heading toward goal)
-    if shaping_delta > 0:
-        reward += 0.1
-
-    # include per-step penalty
-    reward -= RLConfig.STEP_PENALTY
+        # include per-step penalty
+        base_reward -= RLConfig.STEP_PENALTY
 
     # Apply collision penalty if sensors indicate obstacle contact
     if left_sensor is not None and right_sensor is not None:
@@ -171,9 +189,14 @@ def calculate_reward(
             left_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
             or right_obs >= RLConfig.COLLISION_SENSOR_THRESHOLD
         ):
-            reward -= RLConfig.COLLISION_PENALTY
+            base_reward -= RLConfig.COLLISION_PENALTY
 
-    return reward
+    if use_potential_shaping and previous_position is not None and discount_factor is not None:
+        phi_prev = calculate_potential(previous_position, target_position)
+        phi_curr = calculate_potential(current_position, target_position)
+        return base_reward + discount_factor * phi_curr - phi_prev
+
+    return base_reward
 
 
 def get_action_name(action: int) -> str:
