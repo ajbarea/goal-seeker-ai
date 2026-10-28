@@ -64,11 +64,14 @@ def slave_module(monkeypatch):
     fake.AnsiCodes = types.SimpleNamespace(RED_FOREGROUND="", RESET="")
     monkeypatch.setitem(sys.modules, "controller", fake)
     monkeypatch.delitem(sys.modules, "controllers.slave.slave", raising=False)
+    import controllers.slave
     import controllers.slave.slave as slave
 
-    # Drop this copy, built against the fake module, when the test ends.
-    monkeypatch.setitem(sys.modules, "controllers.slave.slave", slave)
-    return slave
+    yield slave
+    # Drop this copy, built against the fake module.
+    sys.modules.pop("controllers.slave.slave", None)
+    if getattr(controllers.slave, "slave", None) is slave:
+        del controllers.slave.slave
 
 
 def test_each_agent_saves_to_its_own_file(slave_module, monkeypatch, tmp_path):
@@ -93,3 +96,7 @@ def test_each_agent_saves_to_its_own_file(slave_module, monkeypatch, tmp_path):
     assert DQNAgent(state_dim=5, action_dim=5, device="cpu").load_q_table(
         str(tmp_path / "dqn.pt")
     )
+
+
+def test_the_fake_backed_module_does_not_outlive_its_test():
+    assert "controllers.slave.slave" not in sys.modules
